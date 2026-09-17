@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import pathlib
 import sys
 
@@ -23,14 +24,23 @@ def read_json(path: pathlib.Path, default=None):
     seats we already announced, which is far better than not running.
     """
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return default
+    return data if isinstance(data, dict) else default
 
 
 def _write(path: pathlib.Path, document: dict):
-    path.write_text(json.dumps(document, ensure_ascii=False, indent=1),
-                    encoding="utf-8")
+    """Write via a temp file and os.replace.
+
+    A truncated state.json reads as missing, and read_json treats missing
+    as empty - which would re-alert every seat on the next poll. An atomic
+    swap means a reader sees either the old file or the new one.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(document, ensure_ascii=False, indent=1),
+                   encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
@@ -41,7 +51,6 @@ def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
     """
     now = now or datetime.datetime.now(datetime.timezone.utc)
     data_dir = pathlib.Path(data_dir)
-    data_dir.mkdir(parents=True, exist_ok=True)
     monitor_factory = monitor_factory or monitor.Monitor
     send = send or alerts.send
 
@@ -57,7 +66,13 @@ def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
         try:
             status_json = mon.refresh_config()
         except monitor.EventOver as exc:
-            mon._event_over(exc)
+            try:
+                mon._event_over(exc)
+            except SystemExit as bail:
+                # Correct for the desktop app; fatal for an unattended cron
+                # job whose one job is to publish a document saying what
+                # went wrong.
+                raise RuntimeError(f"event is over and pinned: {bail}") from None
             status_json = mon.refresh_config()
         buyable, counts = mon.check(status_json)
 
@@ -70,24 +85,37 @@ def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
             buyable=buyable, counts=counts, alerted=len(alertable),
             generated_at=now)
 
+        delivered = None
         if alertable:
             # Telegram is the only channel now, so whether it actually got
             # through is part of the status, not just a log line.
-            status["alert_delivered"] = bool(
-                send(cfg, alerts.alert_text(status, alertable)))
+            delivered = bool(send(cfg, alerts.alert_text(status, alertable)))
+            if not delivered:
+                # A seat nobody was told about must stay eligible to alert
+                # again. Erring towards a duplicate message beats erring
+                # towards silence.
+                state.alerted -= {s.status_id for s in alertable}
+        status["alert_delivered"] = delivered
     except Exception as exc:
         monitor.log(f"poll failed: {exc}")
         status = report.build_error_status(previous, now, str(exc))
 
     today = now.date().isoformat()
-    if alerts.heartbeat_due(last_heartbeat, today):
-        send(cfg, alerts.heartbeat_text(status))
-        last_heartbeat = today
+    try:
+        if alerts.heartbeat_due(last_heartbeat, today):
+            send(cfg, alerts.heartbeat_text(status))
+            last_heartbeat = today
+    except Exception as exc:
+        monitor.log(f"heartbeat failed: {exc}")
 
-    _write(status_path, status)
-    _write(state_path, {"event": state.event, "alerted": sorted(state.alerted),
-                        "updated": now.isoformat(),
-                        "last_heartbeat": last_heartbeat})
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        _write(status_path, status)
+        _write(state_path, {"event": state.event, "alerted": sorted(state.alerted),
+                            "updated": now.isoformat(),
+                            "last_heartbeat": last_heartbeat})
+    except Exception as exc:
+        monitor.log(f"publishing failed: {exc}")
     return status
 
 

@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 
 import monitor
 from webapp import poll
@@ -111,6 +112,10 @@ class TestWritesDocuments(Base):
                       monitor_factory=FakeMonitor, send=self.sent)
         self.assertTrue((nested / "status.json").exists())
 
+    def test_no_temp_files_are_left_behind(self):
+        self.run_once()
+        self.assertEqual(list(self.dir.glob("*.tmp")), [])
+
 
 class TestAlerting(Base):
     def test_alerts_on_newly_buyable_seats(self):
@@ -167,6 +172,22 @@ class TestAlerting(Base):
         self.run_once()
         self.assertIsNone(self.read("status.json")["alert_delivered"])
 
+    def test_a_failed_delivery_leaves_the_seat_eligible_to_alert_again(self):
+        """A seat nobody was told about must not be recorded as announced."""
+        FakeMonitor.seats_to_return = [seat("a")]
+        self.sent = Recorder(ok=False)
+        self.run_once()
+        self.assertEqual(self.read("state.json")["alerted"], [])
+        self.sent = Recorder(ok=True)
+        self.run_once(now=NOW + datetime.timedelta(minutes=5))
+        self.assertTrue(any("AVAILABLE" in m for m in self.sent.messages))
+
+    def test_a_price_suppressed_seat_stays_marked_even_though_nothing_was_sent(self):
+        """Suppression is deliberate; only delivery FAILURE should un-mark."""
+        FakeMonitor.seats_to_return = [seat("a", price=155)]
+        self.run_once(cfg={"alert_below_price": 100})
+        self.assertEqual(self.read("state.json")["alerted"], ["a"])
+
 
 class TestFixtureRollover(Base):
     def test_state_is_dropped_and_seats_realert_on_a_new_fixture(self):
@@ -210,6 +231,36 @@ class TestFailure(Base):
 
     def test_run_once_does_not_raise(self):
         """The workflow must still publish a document when the poll fails."""
+        FakeMonitor.raise_on_refresh = RuntimeError("boom")
+        self.assertIsInstance(self.run_once(), dict)
+
+    def test_a_pinned_finished_event_is_published_as_an_error_not_a_crash(self):
+        """_event_over raises SystemExit, which is not an Exception."""
+        class Pinned(FakeMonitor):
+            def refresh_config(self, status_json=None):
+                raise monitor.EventOver("the game was played")
+            def _event_over(self, exc):
+                raise SystemExit("event is over - set event_url to auto")
+        status = poll.run_once({"alert_below_price": None}, self.dir, now=NOW,
+                               monitor_factory=Pinned, send=self.sent)
+        self.assertIn("over", status["error"])
+        self.assertTrue((self.dir / "status.json").exists())
+
+    def test_a_publishing_failure_does_not_raise(self):
+        FakeMonitor.seats_to_return = [seat("a")]
+        with unittest.mock.patch.object(poll, "_write",
+                                        side_effect=OSError("disk full")):
+            self.assertIsInstance(self.run_once(), dict)
+
+    def test_a_heartbeat_failure_does_not_prevent_publication(self):
+        def boom(cfg, text, **kw):
+            raise RuntimeError("telegram exploded")
+        poll.run_once({"alert_below_price": None}, self.dir, now=NOW,
+                      monitor_factory=FakeMonitor, send=boom)
+        self.assertTrue((self.dir / "status.json").exists())
+
+    def test_a_status_file_of_the_wrong_shape_is_ignored(self):
+        (self.dir / "status.json").write_text("[1, 2, 3]", encoding="utf-8")
         FakeMonitor.raise_on_refresh = RuntimeError("boom")
         self.assertIsInstance(self.run_once(), dict)
 
