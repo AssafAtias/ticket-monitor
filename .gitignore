@@ -1,0 +1,6 @@
+.cache/
+state.json
+history.jsonl
+__pycache__/
+*.pyc
+config.json
