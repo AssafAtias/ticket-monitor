@@ -13,8 +13,9 @@ import monitor
 
 MAX_TELEGRAM_CHARS = 4096
 SEATS_IN_ALERT = 8
-MAX_NAME_CHARS = 120
-MAX_URL_CHARS = 300
+MAX_NAME_CHARS = 80
+MAX_URL_CHARS = 200
+MAX_SEAT_CHARS = 100
 
 
 def send(cfg, text: str, attempts: int = 3, sender=None, sleep=None) -> bool:
@@ -43,9 +44,9 @@ def send(cfg, text: str, attempts: int = 3, sender=None, sleep=None) -> bool:
 def _esc(value) -> str:
     """Escape text for Telegram's parse_mode=HTML.
 
-    Fixture names and seat descriptions come from a third-party feed. An
-    unescaped & or < makes Telegram reject the whole message, and send()
-    would then retry the same broken text and give up silently.
+    Always called on an ALREADY-TRUNCATED value: escaping only grows text,
+    so truncating first guarantees a slice can never cut an entity such as
+    &amp; in half.
     """
     return html.escape(str(value if value is not None else ""), quote=False)
 
@@ -53,23 +54,32 @@ def _esc(value) -> str:
 def alert_text(status: dict, seats) -> str:
     """The message body for newly buyable seats.
 
-    Every interpolated value is escaped and length-bounded, so the result
-    is valid HTML under Telegram's limit by construction rather than by a
-    final slice that could cut a tag in half.
+    Telegram rejects malformed HTML and anything over 4096 characters, and
+    send() would retry the identical rejected text and give up silently. So
+    the header and footer are bounded by MAX_NAME_CHARS and MAX_URL_CHARS
+    (together well under the limit even if every character escapes to five),
+    and seat lines — the only unbounded part — are dropped whole until the
+    message fits. A seat line is expendable; the link is not.
     """
     fixture = status.get("fixture") or {}
     count = len(seats)
     noun = "TICKET" if count == 1 else "TICKETS"
-    name = _esc(fixture.get("name", ""))[:MAX_NAME_CHARS]
-    lines = [f"<b>{count} {noun} AVAILABLE - {name}</b>"]
-    for s in seats[:SEATS_IN_ALERT]:
-        lines.append(f"• {_esc(s.describe())}")
-    if count > SEATS_IN_ALERT:
-        lines.append(f"• ...and {count - SEATS_IN_ALERT} more")
-    lines.append("")
-    lines.append(f"Max {_esc(status.get('max_per_order', 0))} per customer - go now:")
-    lines.append(_esc(fixture.get("url", ""))[:MAX_URL_CHARS])
-    return "\n".join(lines)
+
+    name = _esc(str(fixture.get("name") or "")[:MAX_NAME_CHARS])
+    head = f"<b>{count} {noun} AVAILABLE - {name}</b>"
+    tail = ["",
+            f"Max {_esc(status.get('max_per_order', 0))} per customer - go now:",
+            _esc(str(fixture.get("url") or "")[:MAX_URL_CHARS])]
+
+    shown = list(seats[:SEATS_IN_ALERT])
+    while True:
+        body = [f"• {_esc(str(s.describe())[:MAX_SEAT_CHARS])}" for s in shown]
+        if count > len(shown):
+            body.append(f"• ...and {count - len(shown)} more")
+        text = "\n".join([head] + body + tail)
+        if len(text) <= MAX_TELEGRAM_CHARS or not shown:
+            return text
+        shown.pop()
 
 
 def heartbeat_text(status: dict) -> str:
@@ -82,8 +92,8 @@ def heartbeat_text(status: dict) -> str:
     fixture = status.get("fixture") or {}
     if status.get("error"):
         return (f"Ticket monitor is alive but the last poll FAILED:\n"
-                f"{_esc(status['error'])}")
-    return (f"Ticket monitor alive. Watching {_esc(fixture.get('name', 'nothing'))}"
+                f"{_esc(str(status['error'])[:300])}")
+    return (f"Ticket monitor alive. Watching {_esc(str(fixture.get('name', 'nothing'))[:MAX_NAME_CHARS])}"
             f" - {status.get('buyable', 0)} seat(s) buyable.")
 
 

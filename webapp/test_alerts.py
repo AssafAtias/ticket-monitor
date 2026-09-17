@@ -98,6 +98,12 @@ class TestSend(unittest.TestCase):
                                      sleep=lambda _: None))
         self.assertEqual(s.sent, [])
 
+    def test_negative_attempts_sends_nothing(self):
+        s = Sender([True])
+        self.assertFalse(alerts.send({}, "hi", attempts=-1, sender=s,
+                                     sleep=lambda _: None))
+        self.assertEqual(s.sent, [])
+
 
 class TestAlertText(unittest.TestCase):
     def text(self, n=3):
@@ -143,6 +149,39 @@ class TestAlertText(unittest.TestCase):
         doc = status_doc([])
         doc["error"] = "boom & <crash>"
         self.assertIn("&amp;", alerts.heartbeat_text(doc))
+
+    def test_truncation_never_cuts_an_html_entity_in_half(self):
+        """Escaping after slicing is what guarantees this; the reverse order
+        leaves a broken &a fragment."""
+        doc = status_doc([seat("s1")])
+        doc["fixture"]["name"] = "x" * (alerts.MAX_NAME_CHARS - 1) + "&"
+        t = alerts.alert_text(doc, [seat("s1")])
+        self.assertIn("&amp;", t)
+        self.assertNotRegex(t, r"&[a-z]{0,3}(?![a-z]*;)\b(?<!&amp;)")
+
+    def test_a_url_full_of_ampersands_stays_well_formed(self):
+        doc = status_doc([seat("s1")])
+        doc["fixture"]["url"] = "https://x.test/?" + "&a=1" * 200
+        t = alerts.alert_text(doc, [seat("s1")])
+        self.assertLess(len(t), alerts.MAX_TELEGRAM_CHARS)
+
+    def test_pathological_seat_data_cannot_blow_the_size_limit(self):
+        """Seat fields come from the same third-party feed as everything else."""
+        fat = [monitor.Seat(f"s{i}", "F", "1", "1", "F", "c" * 5000, 155)
+               for i in range(8)]
+        doc = status_doc(fat)
+        t = alerts.alert_text(doc, fat)
+        self.assertLess(len(t), alerts.MAX_TELEGRAM_CHARS)
+        self.assertEqual(t.count("<b>"), t.count("</b>"))
+
+    def test_the_shop_link_survives_even_when_seats_are_dropped(self):
+        """Losing the link would make the alert useless exactly when it matters."""
+        fat = [monitor.Seat(f"s{i}", "F", "1", "1", "F", "c" * 5000, 155)
+               for i in range(8)]
+        doc = status_doc(fat)
+        doc["fixture"]["url"] = "https://tickets.leaan.net/event/--02j286"
+        self.assertIn("https://tickets.leaan.net/event/--02j286",
+                      alerts.alert_text(doc, fat))
 
 
 class TestHeartbeat(unittest.TestCase):
