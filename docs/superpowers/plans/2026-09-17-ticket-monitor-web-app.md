@@ -17,6 +17,7 @@
 - **The engine is off-limits.** Do not modify `parse_shop`, `build_seat_index`, `united_map`, `resolve_seat_status`, `blocked_seat_ids`, `compute_buyable`, `breakdown`, `sibling_event_ids`, `extract_fixtures`, `pick_next_fixture`, or the `Monitor` class. Task 1 modifies `load_config` only.
 - **Never call `monitor.announce()` from the web app.** It shells out to PowerShell for the Windows toast and always-on-top popup. On a Linux runner `_powershell` catches the failure and logs `toast failed: ...` twice per alert — harmless but noisy, and it gives no control over retries. The poller calls `monitor.telegram()` directly.
 - **Secrets come from the environment only.** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. They must never be written to `status.json` or `state.json`, and never committed.
+- **Never write a credential literal into a command, a test, or a doc** — not even a fragment, and not even to grep for it. Scan by pattern. An earlier draft of this plan embedded token fragments in a `grep` example and committed them; that is the failure this rule exists to prevent.
 - **All new tests run offline.** No network access in any test. Use fixtures and injected fakes.
 - **Times are UTC and ISO-8601 with an offset**, produced by `datetime.datetime.now(datetime.timezone.utc).isoformat()`.
 
@@ -163,10 +164,23 @@ Remove the `telegram` block from `config.json` so the committed copy is secret-f
 
 Remove the `config.json` line from `.gitignore`. Leave `state.json`, `history.jsonl`, `.cache/`, `__pycache__/` and `*.pyc` ignored.
 
-**Before committing, verify the secret is not in the working tree:**
+**Before committing, verify no credential is being staged.**
 
-Run: `grep -rn "8983624387\|AAGdCovR0Prz\|281417736" --include="*.json" --include="*.py" --include="*.md" --include="*.yml" .`
-Expected: no matches. If anything matches, stop — do not commit.
+Scan by pattern, never by literal: writing the actual token into a command is
+how it ends up committed in the first place. A Telegram bot token is digits,
+a colon, then 35 URL-safe base64 characters.
+
+```bash
+git add -A
+if git diff --cached | grep -nE "[0-9]{8,10}:[A-Za-z0-9_-]{30,}"; then
+  echo "CREDENTIAL IN STAGED DIFF - do not commit"; exit 1
+else
+  echo "staged diff is clean"
+fi
+```
+
+Expected: `staged diff is clean`. If it reports a credential, stop and report
+BLOCKED — do not commit.
 
 - [ ] **Step 6: Commit**
 
@@ -1828,7 +1842,7 @@ git push origin main
 - [ ] `python -m unittest discover -p "test_*.py"` — 117 tests pass
 - [ ] `node --test "site/**/*.test.js"` — 5 tests pass
 - [ ] The 51 original tests in `test_monitor.py` are unmodified: `git diff f58a8ee -- test_monitor.py` shows only additions
-- [ ] `grep -rn "8983624387\|AAGdCovR0Prz\|281417736" .` returns nothing outside `config.json` and `history.jsonl`, both gitignored
+- [ ] `git grep -nE "[0-9]{8,10}:[A-Za-z0-9_-]{30,}"` returns nothing — no bot token in any tracked file
 - [ ] `gh api repos/AssafAtias/ticket-monitor/pages --jq .html_url` returns the live URL
 - [ ] Two consecutive workflow runs produce exactly one alert for a given seat and one heartbeat per day
 - [ ] The live page shows the same `buyable` count as `curl`-ing `status.json`
