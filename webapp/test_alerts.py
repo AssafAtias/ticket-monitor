@@ -176,12 +176,27 @@ class TestAlertText(unittest.TestCase):
 
     def test_the_shop_link_survives_even_when_seats_are_dropped(self):
         """Losing the link would make the alert useless exactly when it matters."""
+        fat = [monitor.Seat(f"s{i}", "F", "1", "1", "F", "&" * 5000, 155)
+               for i in range(50)]
+        doc = status_doc(fat)
+        doc["max_per_order"] = "9" * 5000
+        doc["fixture"]["name"] = "&" * 80
+        t = alerts.alert_text(doc, fat)
+        self.assertIn("https://tickets.leaan.net/event/--02j286", t)
+        self.assertLess(t.count("•"), len(fat),
+                        "expected the shrink loop to have dropped seat lines")
+        self.assertEqual(t.count("<b>"), t.count("</b>"))
+
+    def test_an_oversized_max_per_order_cannot_blow_the_limit(self):
+        """Every interpolated value comes from the same third-party feed, so
+        none of them may be trusted to be small - including this one."""
         fat = [monitor.Seat(f"s{i}", "F", "1", "1", "F", "c" * 5000, 155)
                for i in range(8)]
         doc = status_doc(fat)
-        doc["fixture"]["url"] = "https://tickets.leaan.net/event/--02j286"
-        self.assertIn("https://tickets.leaan.net/event/--02j286",
-                      alerts.alert_text(doc, fat))
+        doc["max_per_order"] = "9" * 5000
+        t = alerts.alert_text(doc, fat)
+        self.assertLess(len(t), alerts.MAX_TELEGRAM_CHARS)
+        self.assertIn("https://tickets.leaan.net/event/--02j286", t)
 
 
 class TestHeartbeat(unittest.TestCase):

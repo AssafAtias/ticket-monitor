@@ -16,6 +16,7 @@ SEATS_IN_ALERT = 8
 MAX_NAME_CHARS = 80
 MAX_URL_CHARS = 200
 MAX_SEAT_CHARS = 100
+MAX_COUNT_CHARS = 10
 
 
 def send(cfg, text: str, attempts: int = 3, sender=None, sleep=None) -> bool:
@@ -56,10 +57,12 @@ def alert_text(status: dict, seats) -> str:
 
     Telegram rejects malformed HTML and anything over 4096 characters, and
     send() would retry the identical rejected text and give up silently. So
-    the header and footer are bounded by MAX_NAME_CHARS and MAX_URL_CHARS
-    (together well under the limit even if every character escapes to five),
-    and seat lines — the only unbounded part — are dropped whole until the
-    message fits. A seat line is expendable; the link is not.
+    every interpolated value is sliced first, then escaped. With the seat
+    list empty, head (~432 chars: <b>{N TICKETS AVAILABLE - 80-char name})
+    plus tail (~1037 chars: blank line, "Max {10-char count} per customer",
+    200-char URL) = ~1469 chars, comfortably under 4096. Seat lines are
+    dropped whole from the tail until the message fits. A seat line is
+    expendable; the link is not.
     """
     fixture = status.get("fixture") or {}
     count = len(seats)
@@ -68,8 +71,9 @@ def alert_text(status: dict, seats) -> str:
     name = _esc(str(fixture.get("name") or "")[:MAX_NAME_CHARS])
     head = f"<b>{count} {noun} AVAILABLE - {name}</b>"
     tail = ["",
-            f"Max {_esc(status.get('max_per_order', 0))} per customer - go now:",
+            f"Max {_esc(str(status.get('max_per_order', 0))[:MAX_COUNT_CHARS])} per customer - go now:",
             _esc(str(fixture.get("url") or "")[:MAX_URL_CHARS])]
+
 
     shown = list(seats[:SEATS_IN_ALERT])
     while True:
