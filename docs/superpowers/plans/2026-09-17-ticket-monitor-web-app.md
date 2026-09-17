@@ -1235,7 +1235,7 @@ test('an unusable age is treated as down, never as fresh', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test site/`
+Run: `node --test "site/**/*.test.js"`
 Expected: FAIL — cannot find module `./freshness.js`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1445,7 +1445,7 @@ setInterval(tick, REFRESH_MS);
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test site/`
+Run: `node --test "site/**/*.test.js"`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Check the page renders against a real document**
@@ -1797,7 +1797,7 @@ Update the test line under "Run it":
 
 ```markdown
 python -m unittest discover -p "test_*.py"   # 117 Python tests
-node --test site/                            # 5 JS tests
+node --test "site/**/*.test.js"              # 5 JS tests
 ```
 
 - [ ] **Step 2: Verify the documented commands actually work**
@@ -1806,7 +1806,7 @@ Run: `python -m unittest discover -p "test_*.py"`
 Expected: PASS, 117 tests. If the count differs, correct the README rather
 than the number in this plan.
 
-Run: `node --test site/`
+Run: `node --test "site/**/*.test.js"`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 3: Commit**
@@ -1826,7 +1826,7 @@ git push origin main
 ## Final verification
 
 - [ ] `python -m unittest discover -p "test_*.py"` — 117 tests pass
-- [ ] `node --test site/` — 5 tests pass
+- [ ] `node --test "site/**/*.test.js"` — 5 tests pass
 - [ ] The 51 original tests in `test_monitor.py` are unmodified: `git diff f58a8ee -- test_monitor.py` shows only additions
 - [ ] `grep -rn "8983624387\|AAGdCovR0Prz\|281417736" .` returns nothing outside `config.json` and `history.jsonl`, both gitignored
 - [ ] `gh api repos/AssafAtias/ticket-monitor/pages --jq .html_url` returns the live URL
