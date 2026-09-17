@@ -7,8 +7,12 @@ implementation that just counts "free" in the JSON fails there.
 import copy
 import datetime
 import json
+import os
 import pathlib
+import shutil
+import tempfile
 import unittest
+import unittest.mock
 
 import monitor
 
@@ -392,6 +396,60 @@ class TestSiblingEvents(Base):
         freed = self.free_one(sid)
         freed["childMaps"][self.SIBLING][sid] = "booked"
         self.assertNotIn(sid, [s.status_id for s in self.buyable(freed)])
+
+
+class TestConfigSecrets(unittest.TestCase):
+    """The repo is public, so credentials come from the environment."""
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.path = self.dir / "config.json"
+        patcher = unittest.mock.patch.object(monitor, "CONFIG_PATH", self.path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write(self, cfg):
+        self.path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def test_env_supplies_credentials_the_file_does_not_have(self):
+        self.write({"event_url": "auto"})
+        with unittest.mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok",
+                                                   "TELEGRAM_CHAT_ID": "42"}):
+            cfg = monitor.load_config()
+        self.assertEqual(cfg["telegram"]["bot_token"], "tok")
+        self.assertEqual(cfg["telegram"]["chat_id"], "42")
+
+    def test_env_wins_over_the_file(self):
+        self.write({"telegram": {"bot_token": "stale", "chat_id": "old"}})
+        with unittest.mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "fresh",
+                                                   "TELEGRAM_CHAT_ID": "new"}):
+            cfg = monitor.load_config()
+        self.assertEqual(cfg["telegram"]["bot_token"], "fresh")
+        self.assertEqual(cfg["telegram"]["chat_id"], "new")
+
+    def test_file_still_works_with_no_env(self):
+        """Local use must not require exporting variables."""
+        self.write({"telegram": {"bot_token": "local", "chat_id": "7"}})
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            cfg = monitor.load_config()
+        self.assertEqual(cfg["telegram"]["bot_token"], "local")
+
+    def test_absent_everywhere_is_not_an_error(self):
+        """Telegram is optional; everything else must still work without it."""
+        self.write({"event_url": "auto"})
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            cfg = monitor.load_config()
+        self.assertFalse((cfg.get("telegram") or {}).get("bot_token"))
+        self.assertFalse(monitor.telegram(cfg, "should not send"))
+
+    def test_partial_env_is_ignored_rather_than_half_applied(self):
+        """A token with no chat id cannot send; do not pretend it is configured."""
+        self.write({"event_url": "auto"})
+        with unittest.mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "tok"},
+                                      clear=True):
+            cfg = monitor.load_config()
+        self.assertFalse((cfg.get("telegram") or {}).get("bot_token"))
 
 
 if __name__ == "__main__":

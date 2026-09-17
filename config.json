@@ -1,0 +1,10 @@
+{
+  "label": "next Maccabi TA game (discovered automatically)",
+  "event_url": "auto",
+  "child_event_ids": [],
+  "seating_base": "https://seatmap.vivenu.com",
+  "poll_seconds": 60,
+  "refresh_config_seconds": 300,
+  "alert_below_price": 800,
+  "popup": true
+}

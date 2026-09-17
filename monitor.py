@@ -26,6 +26,7 @@ import dataclasses
 import datetime
 import gzip
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -707,7 +708,24 @@ def log(msg: str):
 def load_config() -> dict:
     if not CONFIG_PATH.exists():
         raise SystemExit(f"missing config: {CONFIG_PATH}")
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    return _apply_env_secrets(cfg)
+
+
+def _apply_env_secrets(cfg: dict) -> dict:
+    """Overlay credentials from the environment onto the config file.
+
+    The repo is public, so config.json is committed without secrets and the
+    workflow injects them. Both halves must be present: a token without a chat
+    id cannot send, and pretending otherwise turns a misconfiguration into a
+    silent non-delivery.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        cfg = dict(cfg)
+        cfg["telegram"] = {"bot_token": token, "chat_id": chat_id}
+    return cfg
 
 
 def pinned_event_url(cfg):
