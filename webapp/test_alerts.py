@@ -85,6 +85,19 @@ class TestSend(unittest.TestCase):
         self.assertFalse(alerts.send({}, "hi", attempts=2, sender=boom,
                                      sleep=lambda _: None))
 
+    def test_send_survives_a_sleep_that_throws(self):
+        """send()'s no-raise contract protects the caller's pending disk write."""
+        def bad_sleep(_):
+            raise RuntimeError("clock broke")
+        self.assertFalse(alerts.send({}, "hi", attempts=2,
+                                     sender=Sender([False, False]), sleep=bad_sleep))
+
+    def test_zero_attempts_sends_nothing_and_reports_failure(self):
+        s = Sender([True])
+        self.assertFalse(alerts.send({}, "hi", attempts=0, sender=s,
+                                     sleep=lambda _: None))
+        self.assertEqual(s.sent, [])
+
 
 class TestAlertText(unittest.TestCase):
     def text(self, n=3):
@@ -109,6 +122,27 @@ class TestAlertText(unittest.TestCase):
 
     def test_singular_for_one_seat(self):
         self.assertNotIn("1 TICKETS", self.text(n=1))
+
+    def test_escapes_html_so_telegram_cannot_reject_the_message(self):
+        """Team names come from a third-party feed; & and < must not break HTML."""
+        doc = status_doc([seat("s1")])
+        doc["fixture"]["name"] = 'Ajax & <b>PSV</b>'
+        t = alerts.alert_text(doc, [seat("s1")])
+        self.assertIn("Ajax &amp; &lt;b&gt;PSV&lt;/b&gt;", t)
+        self.assertEqual(t.count("<b>"), 1)
+        self.assertEqual(t.count("</b>"), 1)
+
+    def test_a_pathological_fixture_name_still_yields_valid_bounded_html(self):
+        doc = status_doc([seat("s1")])
+        doc["fixture"]["name"] = "x" * 10000
+        t = alerts.alert_text(doc, [seat("s1")])
+        self.assertLess(len(t), 4096)
+        self.assertTrue(t.count("<b>") == t.count("</b>") == 1)
+
+    def test_heartbeat_escapes_an_error_string(self):
+        doc = status_doc([])
+        doc["error"] = "boom & <crash>"
+        self.assertIn("&amp;", alerts.heartbeat_text(doc))
 
 
 class TestHeartbeat(unittest.TestCase):
