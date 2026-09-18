@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { safeHref, ago, kickoff, liveSummary } from './format.js';
+import { safeHref, ago, kickoff, liveSummary, dataSources, refreshDelay } from './format.js';
 
 // safeHref runs in a browser where `location` exists; node --test does not
 // provide one, so give the module a minimal stand-in.
@@ -121,4 +121,54 @@ test('liveSummary tells a screen reader how old the figures really are', () => {
 test('liveSummary omits the confirmation clause when there is nothing to say', () => {
   const t = liveSummary({ buyable: 0, error: 'feed timed out' }, 12);
   assert.doesNotMatch(t, /last confirmed/);
+});
+
+test('dataSources tries raw.githubusercontent.com before the contents API', () => {
+  const sources = dataSources('AssafAtias/ticket-monitor');
+  assert.equal(sources.length, 2);
+  assert.equal(sources[0].name, 'raw');
+  assert.equal(sources[1].name, 'contents-api');
+  assert.match(sources[0].url, /^https:\/\/raw\.githubusercontent\.com\//);
+  assert.match(sources[1].url, /^https:\/\/api\.github\.com\//);
+});
+
+test('dataSources never puts a query string on the raw URL', () => {
+  // Guards against the `?t=${Date.now()}` cache-buster being re-added: it
+  // was verified live to do nothing (the CDN normalises the query string
+  // away and serves the same poisoned 503 either way), so it must stay gone.
+  const [raw] = dataSources('AssafAtias/ticket-monitor');
+  assert.ok(!raw.url.includes('?'), `expected no query string, got ${raw.url}`);
+});
+
+test('dataSources sets the raw-body Accept header on the contents API fallback', () => {
+  const [, contentsApi] = dataSources('AssafAtias/ticket-monitor');
+  assert.equal(contentsApi.headers.Accept, 'application/vnd.github.raw');
+});
+
+test('dataSources points both sources at the data branch/ref', () => {
+  const [raw, contentsApi] = dataSources('AssafAtias/ticket-monitor');
+  assert.match(raw.url, /\/data\/status\.json$/);
+  assert.match(contentsApi.url, /[?&]ref=data(&|$)/);
+});
+
+test('dataSources builds both URLs from the given repo', () => {
+  const [raw, contentsApi] = dataSources('someone/other-repo');
+  assert.match(raw.url, /^https:\/\/raw\.githubusercontent\.com\/someone\/other-repo\//);
+  assert.match(contentsApi.url, /^https:\/\/api\.github\.com\/repos\/someone\/other-repo\//);
+});
+
+test('refreshDelay gives the primary source the normal cadence', () => {
+  assert.equal(refreshDelay('raw'), 60000);
+});
+
+test('refreshDelay slows down once the rate-limited fallback is in use', () => {
+  // Keeps a viewer who leaves the page open for an hour during a raw
+  // outage inside the GitHub API's 60-requests-per-hour budget.
+  assert.equal(refreshDelay('contents-api'), 120000);
+});
+
+test('refreshDelay falls back safely for an unknown or missing source name', () => {
+  assert.equal(refreshDelay('nonsense'), 60000);
+  assert.equal(refreshDelay(undefined), 60000);
+  assert.equal(refreshDelay(null), 60000);
 });

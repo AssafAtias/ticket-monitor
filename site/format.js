@@ -46,6 +46,45 @@ export function liveSummary(status, ageSeconds, lastSuccessSeconds) {
   return `${n} seat${n === 1 ? '' : 's'} buyable, checked ${ago(ageSeconds)}.`;
 }
 
+// Verified live on 2026-09-18: raw.githubusercontent.com had a poisoned
+// CDN edge-cache entry for this one path (persistent 503s from the browser,
+// while curl and every other path on the same branch returned 200). The
+// GitHub contents API is the fallback for exactly that failure mode - it
+// goes through a different edge and is unaffected - but GitHub caps it at
+// 60 requests/hour per viewer IP, so it must not become the steady-state
+// source. jsDelivr also 200s but caches branch refs for up to 12 hours,
+// useless for a 5-minute poll cadence, and is intentionally not listed.
+export function dataSources(repo) {
+  return [
+    {
+      name: 'raw',
+      url: `https://raw.githubusercontent.com/${repo}/data/status.json`,
+      headers: {},
+    },
+    {
+      // `Accept: application/vnd.github.raw` makes this endpoint return the
+      // raw file body directly, instead of a JSON envelope with the content
+      // base64-encoded inside it.
+      name: 'contents-api',
+      url: `https://api.github.com/repos/${repo}/contents/status.json?ref=data`,
+      headers: { Accept: 'application/vnd.github.raw' },
+    },
+  ];
+}
+
+const REFRESH_DELAYS = {
+  raw: 60000,
+  'contents-api': 120000,
+};
+
+export function refreshDelay(sourceName) {
+  // Unknown or absent names (e.g. before any fetch has ever succeeded) get
+  // the primary's cadence, not the slower one - there is no evidence yet
+  // that we are leaning on the rate-limited fallback, and defaulting to the
+  // long delay would just make the page feel unresponsive for no reason.
+  return REFRESH_DELAYS[sourceName] ?? 60000;
+}
+
 export function kickoff(value) {
   // Returns a formatted local date, or null when the value is absent or
   // unparseable - new Date('nonsense') does not throw, it renders the

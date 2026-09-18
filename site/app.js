@@ -1,13 +1,16 @@
 import { freshnessFor } from './freshness.js';
-import { safeHref, ago, kickoff, liveSummary } from './format.js';
+import { safeHref, ago, kickoff, liveSummary, dataSources, refreshDelay } from './format.js';
 
 // The page is served from GitHub Pages but the data lives on the `data`
-// branch, fetched straight from raw.githubusercontent.com (which sends
-// Access-Control-Allow-Origin: *). That keeps Pages from redeploying every
-// five minutes just because a number changed.
-const DATA_URL =
-  'https://raw.githubusercontent.com/AssafAtias/ticket-monitor/data/status.json';
-const REFRESH_MS = 30000;
+// branch. Primary source is raw.githubusercontent.com (Access-Control-
+// Allow-Origin: *, no rate limit); that keeps Pages from redeploying every
+// five minutes just because a number changed. It has a CDN edge that can
+// serve a poisoned cache entry for one path indefinitely (verified live:
+// persistent 503s from the browser for this exact URL while curl and every
+// other path on the same branch returned 200), so a second source - the
+// GitHub contents API - is tried if the first fails. See dataSources() in
+// format.js for why, and for the ordering.
+const SOURCES = dataSources('AssafAtias/ticket-monitor');
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -130,20 +133,43 @@ function renderUnreachable(message) {
 }
 
 let lastShown = 0;
+// Which source last produced a document. Feeds refreshDelay() so that once
+// we've fallen back to the rate-limited contents API, we poll it less often
+// - a viewer leaving the page open for an hour during a raw outage must not
+// burn through the 60-requests-per-hour budget. Starts unset, which
+// refreshDelay() treats the same as the primary.
+let lastSourceName;
+
+function scheduleNext() {
+  setTimeout(tick, refreshDelay(lastSourceName));
+}
 
 async function tick() {
   let status;
-  try {
-    // Cache-bust: raw.githubusercontent.com caches for about five minutes.
-    const resp = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: 'no-store' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    status = await resp.json();
-  } catch (err) {
-    const message = String((err && err.message) || err);
+  const attempts = [];
+  for (const source of SOURCES) {
+    try {
+      // No cache-buster here: raw.githubusercontent.com's CDN was verified
+      // live to normalise the query string away and serve the same 503
+      // either way, so `?t=${Date.now()}` did nothing but look reassuring.
+      // Do not re-add it - use a real second source instead (below).
+      const resp = await fetch(source.url, { cache: 'no-store', headers: source.headers });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      status = await resp.json();
+      lastSourceName = source.name;
+      break;
+    } catch (err) {
+      attempts.push(`${source.name}: ${String((err && err.message) || err)}`);
+    }
+  }
+
+  if (!status) {
+    const message = `all sources failed (${attempts.join('; ')})`;
     // Keep the last reading visible. Its own staleness badge is more
     // honest than discarding real data over one blip.
     if (lastShown) noteRefreshFailure(message);
     else renderUnreachable(message);
+    scheduleNext();
     return;
   }
 
@@ -151,7 +177,7 @@ async function tick() {
   // Responses can land out of order; an older document must never
   // replace a newer one already on screen.
   if (Number.isFinite(stamp)) {
-    if (stamp < lastShown) return;
+    if (stamp < lastShown) { scheduleNext(); return; }
     lastShown = stamp;
   }
 
@@ -163,6 +189,7 @@ async function tick() {
     renderUnreachable(
       `loaded the data but could not render it: ${String((err && err.message) || err)}`);
   }
+  scheduleNext();
 }
 
 function noteRefreshFailure(message) {
@@ -178,4 +205,3 @@ function noteRefreshFailure(message) {
 }
 
 tick();
-setInterval(tick, REFRESH_MS);
