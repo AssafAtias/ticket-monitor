@@ -10,7 +10,7 @@ next game that has not been played yet.
 Live at **https://assafatias.github.io/ticket-monitor/**.
 
 A GitHub Actions cron job polls every 5 minutes, alerts to Telegram, and
-publishes `status.json` to the `data` branch. The page fetches that document
+publishes `status.json` and `state.json` to the `data` branch. The page fetches that document
 and renders it; it never talks to the ticket shop itself.
 
 ```
@@ -195,4 +195,4 @@ unnoticed, it just doesn't wake you up.
 - Scheduled workflows are disabled automatically after 60 days without
   repository activity. The daily Telegram heartbeat is how you would notice.
 - The page reports the true age of its data, so it is never misleading about
-  freshness - only, sometimes, late.
+  freshness — only, sometimes, late.

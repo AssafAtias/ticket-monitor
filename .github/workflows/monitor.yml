@@ -37,8 +37,6 @@ jobs:
           restore-keys: seatmap-
 
       - name: Fetch the previous state
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data
           # Read state over git, not raw.githubusercontent.com: raw is CDN
@@ -46,7 +44,7 @@ jobs:
           # seats we already announced.
           if git fetch --depth=1 origin data 2>/dev/null; then
             git show FETCH_HEAD:state.json > data/state.json || echo '{}' > data/state.json
-            git show FETCH_HEAD:status.json > data/status.json || true
+            git show FETCH_HEAD:status.json > data/status.json || echo '{}' > data/status.json
           else
             echo "no data branch yet - first run"
             echo '{}' > data/state.json
@@ -83,11 +81,18 @@ jobs:
         run: |
           # The cached filename encodes seating event id and revision, so the
           # key is stable for a fixture and changes when the venue's map does.
-          fingerprint="$(ls .cache 2>/dev/null | sort | sha256sum | cut -c1-16)"
-          echo "key=seatmap-${fingerprint}" >> "$GITHUB_OUTPUT"
+          # An empty or absent .cache must yield an EMPTY key: hashing "nothing"
+          # produces a perfectly valid-looking hash, which is why the previous
+          # guard could never fire.
+          if [ -d .cache ] && [ -n "$(ls -A .cache 2>/dev/null)" ]; then
+            fingerprint="$(ls .cache | sort | sha256sum | cut -c1-16)"
+            echo "key=seatmap-${fingerprint}" >> "$GITHUB_OUTPUT"
+          else
+            echo "key=" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/cache/save@v4
-        if: steps.mapkey.outputs.key != 'seatmap-'
+        if: steps.mapkey.outputs.key != ''
         continue-on-error: true
         with:
           path: .cache
