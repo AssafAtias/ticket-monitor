@@ -1,0 +1,94 @@
+name: monitor
+
+on:
+  schedule:
+    # Every 5 minutes is the GitHub minimum. Runs are frequently delayed
+    # under load; the page reports true age, so lateness is visible.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+# Only one poll at a time. Overlapping runs would race on the data branch
+# and could re-alert seats that the other run already announced.
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The seat map is ~4.6MB and changes only when the venue's revision
+      # changes. Restoring it keeps us from re-downloading it every 5 minutes.
+      - uses: actions/cache/restore@v4
+        id: mapcache
+        with:
+          path: .cache
+          key: seatmap-
+          restore-keys: seatmap-
+
+      - name: Fetch the previous state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          # Read state over git, not raw.githubusercontent.com: raw is CDN
+          # cached for ~5 minutes, and a stale state file would re-alert
+          # seats we already announced.
+          if git fetch --depth=1 origin data 2>/dev/null; then
+            git show FETCH_HEAD:state.json > data/state.json || echo '{}' > data/state.json
+            git show FETCH_HEAD:status.json > data/status.json || true
+          else
+            echo "no data branch yet - first run"
+            echo '{}' > data/state.json
+          fi
+
+      - name: Poll
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONIOENCODING: utf-8
+        run: python -m webapp.poll --data-dir data
+
+      - name: Publish to the data branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A fresh orphan commit force-pushed each run: the branch always
+          # holds exactly one commit, so 8,640 pushes a month never grow
+          # the repository.
+          work="$(mktemp -d)"
+          cp data/status.json data/state.json "$work/"
+          cd "$work"
+          git init -q -b data
+          git add -A
+          git -c user.name='ticket-monitor' \
+              -c user.email='actions@github.com' \
+              commit -q -m "data: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push -q --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            data
+
+      - name: Compute the seat-map cache key
+        id: mapkey
+        run: |
+          # The cached filename encodes seating event id and revision, so the
+          # key is stable for a fixture and changes when the venue's map does.
+          fingerprint="$(ls .cache 2>/dev/null | sort | sha256sum | cut -c1-16)"
+          echo "key=seatmap-${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/save@v4
+        if: steps.mapkey.outputs.key != 'seatmap-'
+        continue-on-error: true
+        with:
+          path: .cache
+          key: ${{ steps.mapkey.outputs.key }}
