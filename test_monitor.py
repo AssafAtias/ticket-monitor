@@ -622,5 +622,111 @@ class TestShortReadShapes(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
 
+class TestAnnounceTelegramBody(unittest.TestCase):
+    """announce() is the live alert path for run.cmd and --once.
+
+    It was an unhardened twin of webapp.alerts.alert_text: same message, no
+    escaping and no length bound. Telegram rejects malformed HTML and
+    anything over 4096 characters, and a rejected alert is a seat nobody was
+    ever told about.
+    """
+
+    SHOP = monitor.Shop(
+        event_id="e1", seating_event_id="se1", revision_id="r1",
+        event_name="Ajax & <b>PSV</b>", event_start="2026-09-19T17:00:00.000Z",
+        sale_status="onSale", max_per_order=1, allowed_contingents=frozenset(),
+        sellable={"catA": ("Upper", 155)})
+
+    def setUp(self):
+        self.sent = []
+        for name in ("toast", "popup"):
+            patch = unittest.mock.patch.object(monitor, name, lambda *a, **k: None)
+            patch.start()
+            self.addCleanup(patch.stop)
+        patch = unittest.mock.patch.object(
+            monitor, "telegram",
+            lambda cfg, text: self.sent.append(text) or True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def seats(self, n, category="Upper"):
+        return [monitor.Seat(f"s{i}", "F", "1", str(i), "F", category, 155)
+                for i in range(n)]
+
+    def announce(self, seats, shop=None, url="https://tickets.leaan.net/e/x",
+                 test=False):
+        monitor.announce({"popup": False}, seats, shop or self.SHOP,
+                         test=test, url=url)
+        return self.sent[-1]
+
+    def test_the_event_name_is_escaped(self):
+        text = self.announce(self.seats(1))
+        self.assertIn("Ajax &amp; &lt;b&gt;PSV&lt;/b&gt;", text)
+        self.assertEqual(text.count("<b>"), 1)
+        self.assertEqual(text.count("</b>"), 1)
+
+    def test_seat_descriptions_are_escaped(self):
+        text = self.announce(self.seats(1, category="A & B <x>"))
+        self.assertIn("&amp;", text)
+        self.assertNotIn("<x>", text)
+
+    def test_a_pathological_event_name_cannot_blow_the_size_limit(self):
+        shop = monitor.dataclasses.replace(self.SHOP, event_name="&" * 10000)
+        text = self.announce(self.seats(1), shop=shop)
+        self.assertLess(len(text), monitor.TELEGRAM_MAX_CHARS)
+        self.assertEqual(text.count("<b>"), text.count("</b>"))
+
+    def test_an_oversized_max_per_order_cannot_blow_the_size_limit(self):
+        shop = monitor.dataclasses.replace(self.SHOP, max_per_order="9" * 10000)
+        text = self.announce(self.seats(1), shop=shop)
+        self.assertLess(len(text), monitor.TELEGRAM_MAX_CHARS)
+
+    def overflowing(self):
+        """Every bounded value at its maximum, all of them escaping 5x.
+
+        8 seat lines (100 chars each) + an 80-char name + a 200-char URL all
+        made of "&" is ~5,500 characters escaped - the only way to reach the
+        limit once each field is individually bounded, and therefore the only
+        data that exercises the shrink loop at all.
+        """
+        shop = monitor.dataclasses.replace(self.SHOP, event_name="&" * 80)
+        fat = [monitor.Seat(f"s{i}", "&" * 200, "&" * 200, "&" * 200,
+                            "&" * 200, "&" * 200, 155) for i in range(20)]
+        return self.announce(fat, shop=shop,
+                             url="https://tickets.leaan.net/" + "&" * 200)
+
+    def test_fat_seat_lines_are_dropped_until_it_fits(self):
+        text = self.overflowing()
+        self.assertLess(len(text), monitor.TELEGRAM_MAX_CHARS)
+        self.assertLess(text.count("•"), 9,
+                        "expected the shrink loop to have dropped seat lines")
+
+    def test_the_shop_link_survives_the_shrink(self):
+        """Losing the link makes the alert useless exactly when it matters."""
+        text = self.overflowing()
+        self.assertIn("https://tickets.leaan.net/", text)
+        self.assertEqual(text.count("<b>"), text.count("</b>"))
+
+    def test_a_giant_url_is_bounded_too(self):
+        text = self.announce(self.seats(1), url="https://x.test/?" + "&a=1" * 3000)
+        self.assertLess(len(text), monitor.TELEGRAM_MAX_CHARS)
+
+    def test_truncation_never_cuts_an_entity_in_half(self):
+        shop = monitor.dataclasses.replace(
+            self.SHOP, event_name="x" * (monitor.TELEGRAM_NAME_CHARS - 1) + "&")
+        text = self.announce(self.seats(1), shop=shop)
+        self.assertIn("&amp;", text)
+
+    def test_a_test_alert_is_still_marked_as_one(self):
+        text = self.announce(self.seats(1), test=True)
+        self.assertIn("TEST", text)
+
+    def test_an_ordinary_alert_is_unchanged_in_substance(self):
+        text = self.announce(self.seats(2))
+        self.assertIn("2 TICKETS AVAILABLE", text)
+        self.assertIn("Max 1 per customer", text)
+        self.assertIn("https://tickets.leaan.net/e/x", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

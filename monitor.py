@@ -25,6 +25,7 @@ import argparse
 import dataclasses
 import datetime
 import gzip
+import html
 import http.client
 import json
 import os
@@ -689,6 +690,27 @@ def telegram(cfg, text: str):
         return False
 
 
+# The desktop alert path builds its own Telegram message rather than
+# importing webapp.alerts, which imports this module. The bounds below are
+# that module's, restated: Telegram rejects malformed HTML and anything over
+# 4096 characters, and a rejected message is a seat nobody was told about.
+TELEGRAM_MAX_CHARS = 4096
+TELEGRAM_NAME_CHARS = 80
+TELEGRAM_URL_CHARS = 200
+TELEGRAM_SEAT_CHARS = 100
+TELEGRAM_COUNT_CHARS = 10
+
+
+def _tg(value, limit: int) -> str:
+    """Truncate, then escape, for Telegram's parse_mode=HTML.
+
+    That order matters: escaping only grows text, so slicing first is what
+    guarantees a cut can never land inside an entity such as &amp;.
+    """
+    return html.escape(str(value if value is not None else "")[:limit],
+                       quote=False)
+
+
 def announce(cfg, seats, shop, test=False, url=""):
     top = seats[:8]
     lines = [s.describe() for s in top]
@@ -713,11 +735,28 @@ def announce(cfg, seats, shop, test=False, url=""):
         popup(title, lines + ["", f"Max {shop.max_per_order} per customer - go now."],
               url)
 
-    body = "\n".join(f"• {line}" for line in lines)
+    # Every value below comes from the same third-party feed as the seats.
+    # Unescaped, one "&" in a team name makes Telegram reject the message;
+    # unbounded, one long name pushes it past 4096 and Telegram rejects it
+    # again. Either way the alert is lost and only the desktop toast remains.
+    head = (f"{len(seats)} TICKET{'S' if len(seats) != 1 else ''} AVAILABLE"
+            f" - {_tg(shop.event_name, TELEGRAM_NAME_CHARS)}")
+    if test:
+        head = "[TEST - NOT A REAL TICKET] " + head
+    tail = ["",
+            f"Max {_tg(shop.max_per_order, TELEGRAM_COUNT_CHARS)} per customer - go now:",
+            _tg(url, TELEGRAM_URL_CHARS)]
+    body = [f"• {_tg(line, TELEGRAM_SEAT_CHARS)}" for line in lines]
+    while True:
+        # Seat lines are dropped whole until it fits. A seat line is
+        # expendable; the link underneath is the entire point of the message.
+        message = "\n".join([f"<b>{head}</b>"] + body + tail)
+        if len(message) <= TELEGRAM_MAX_CHARS or not body:
+            break
+        body.pop()
+
     configured = bool((cfg.get("telegram") or {}).get("bot_token"))
-    sent = telegram(cfg, (f"<b>{title}</b>\n{body}\n\n"
-                          f"Max {shop.max_per_order} per customer - go now:\n"
-                          f"{url}"))
+    sent = telegram(cfg, message)
     if configured and not sent:
         log("!! telegram delivery FAILED - desktop alert only")
 
