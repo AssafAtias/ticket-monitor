@@ -1,4 +1,5 @@
 import { freshness } from './freshness.js';
+import { safeHref, ago, kickoff } from './format.js';
 
 // The page is served from GitHub Pages but the data lives on the `data`
 // branch, fetched straight from raw.githubusercontent.com (which sends
@@ -15,13 +16,6 @@ const el = (tag, cls, text) => {
   return n;
 };
 
-function ago(seconds) {
-  if (seconds < 90) return `${Math.max(0, Math.round(seconds))}s ago`;
-  const mins = Math.round(seconds / 60);
-  if (mins < 90) return `${mins} min ago`;
-  return `${Math.round(mins / 60)} h ago`;
-}
-
 const STATUS_TEXT = {
   ok: age => `checked ${ago(age)}`,
   late: age => `checked ${ago(age)} — the scheduler is running late`,
@@ -35,12 +29,8 @@ function render(status, ageSeconds) {
   const fixture = status.fixture || {};
   card.append(el('h1', null, fixture.name || 'No fixture'));
 
-  if (fixture.start) {
-    const kickoff = new Date(fixture.start);
-    const when = kickoff.toLocaleString(undefined, {
-      weekday: 'short', day: 'numeric', month: 'short',
-      hour: '2-digit', minute: '2-digit',
-    });
+  const when = kickoff(fixture.start);
+  if (when) {
     card.append(el('p', 'when', fixture.venue ? `${when} · ${fixture.venue}` : when));
   }
 
@@ -61,12 +51,16 @@ function render(status, ageSeconds) {
     card.append(table);
   }
 
-  if (fixture.url) {
+  const href = safeHref(fixture.url);
+  if (href) {
     const cta = el('a', 'cta', 'Open the shop →');
-    cta.href = fixture.url;
+    cta.href = href;
     cta.rel = 'noopener';
     cta.target = '_blank';
     card.append(cta);
+  } else if (fixture.url) {
+    card.append(el('p', 'error',
+      `Shop link was rejected as unsafe: ${fixture.url}`));
   }
 
   if (status.max_per_order) {
@@ -88,6 +82,10 @@ function render(status, ageSeconds) {
   const level = freshness(ageSeconds);
   card.append(el('p', `status ${level}`, STATUS_TEXT[level](ageSeconds)));
   document.title = `${status.buyable ?? 0} · Ticket Monitor`;
+
+  const live = document.getElementById('live');
+  const summary = `${status.buyable ?? 0} seats buyable, checked ${ago(ageSeconds)}`;
+  if (live && live.textContent !== summary) live.textContent = summary;
 }
 
 function renderUnreachable(message) {
@@ -96,8 +94,10 @@ function renderUnreachable(message) {
   card.append(el('h1', null, 'Cannot reach the monitor'));
   card.append(el('p', 'error', message));
   card.append(el('p', 'status down',
-    'This page could not load status.json. The monitor itself may still be running.'));
+    'Could not load or read status.json. The monitor itself may still be running.'));
 }
+
+let lastShown = 0;
 
 async function tick() {
   try {
@@ -105,11 +105,35 @@ async function tick() {
     const resp = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const status = await resp.json();
-    const age = (Date.now() - new Date(status.generated_at).getTime()) / 1000;
-    render(status, age);
+    const stamp = new Date(status.generated_at).getTime();
+    // Responses can land out of order; an older document must never
+    // replace a newer one already on screen.
+    if (Number.isFinite(stamp)) {
+      if (stamp < lastShown) return;
+      lastShown = stamp;
+    }
+    render(status, (Date.now() - stamp) / 1000);
   } catch (err) {
-    renderUnreachable(String(err.message || err));
+    const message = String((err && err.message) || err);
+    if (lastShown) {
+      // Keep the last reading visible. Its own staleness badge is more
+      // honest than discarding real data over one blip.
+      noteRefreshFailure(message);
+    } else {
+      renderUnreachable(message);
+    }
   }
+}
+
+function noteRefreshFailure(message) {
+  const card = document.getElementById('card');
+  let note = document.getElementById('refresh-note');
+  if (!note) {
+    note = el('p', 'error');
+    note.id = 'refresh-note';
+    card.append(note);
+  }
+  note.textContent = `Could not refresh (${message}). Showing the last reading.`;
 }
 
 tick();
