@@ -5,6 +5,24 @@ purchasable** seat appears. It follows Maccabi TA's schedule by itself: every
 config refresh it re-reads the ticket office's fixture list and locks onto the
 next game that has not been played yet.
 
+## Where it runs
+
+Live at **https://assafatias.github.io/ticket-monitor/**.
+
+A GitHub Actions cron job polls every 5 minutes, alerts to Telegram, and
+publishes `status.json` to the `data` branch. The page fetches that document
+and renders it; it never talks to the ticket shop itself.
+
+```
+Actions cron */5  ->  webapp/poll.py  ->  Telegram
+                                      ->  data branch (status.json, state.json)
+                                                 ^
+                      GitHub Pages (site/) ------+  fetched by the browser
+```
+
+`run.cmd` still works for running it locally on Windows, with the console
+output, toast and always-on-top popup.
+
 ## Run it
 
 ```
@@ -16,7 +34,8 @@ Leave the window open; Ctrl+C stops it. It restarts itself if it ever crashes.
 ```
 python monitor.py --once         # one check, print the breakdown, exit
 python monitor.py --test-alert   # verify the toast + Telegram path
-python -m unittest test_monitor   # 51 regression tests
+python -m unittest discover -p "test_*.py"   # 139 Python tests
+node --test "site/**/*.test.js"              # 18 JS tests
 ```
 
 ## Which game it watches
@@ -165,11 +184,15 @@ unnoticed, it just doesn't wake you up.
 
 ## Limits
 
-- Only alerts while it is running — the machine must not sleep.
-- Away games are sold to logged-in users only. The monitor sees the sale
-  without signing in, but you cannot buy unless you are already signed in when
-  it fires — so sign in first.
+- **5-15 minutes of latency.** GitHub's cron minimum is 5 minutes and runs are
+  frequently delayed under load. For a drop capped at one ticket per customer
+  this may lose the seat. Hosting the poller on a $2/month always-on machine
+  would bring it back to 60 seconds; that trade was made deliberately to keep
+  the running cost at zero.
 - **Max 1 ticket per customer, per order, per transaction.** When it fires, move.
-- 60s polling means up to a minute of latency. The shop also runs a websocket
-  (`initStatusChangeSocket`) for instant pushes; that is the upgrade path if the
-  sale turns out to move in seconds.
+- Away fixtures can only be bought by signed-in users. The monitor sees the
+  sale without signing in, so **sign in before the alert arrives**.
+- Scheduled workflows are disabled automatically after 60 days without
+  repository activity. The daily Telegram heartbeat is how you would notice.
+- The page reports the true age of its data, so it is never misleading about
+  freshness - only, sometimes, late.
