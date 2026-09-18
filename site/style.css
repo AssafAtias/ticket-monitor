@@ -31,6 +31,10 @@ td.has { text-align: right; color: var(--ok); font-weight: 600; }
 }
 .cta[aria-disabled="true"] { background: var(--line); color: var(--dim); }
 .note { color: var(--dim); font-size: 13px; text-align: center; margin: 10px 0 0; }
+.stale {
+  text-align: center; margin: 0 0 18px; font-size: 13px;
+  color: var(--late); font-weight: 600;
+}
 .status { margin: 16px 0 0; font-size: 13px; text-align: center; }
 .status.ok { color: var(--dim); }
 .status.late { color: var(--late); }

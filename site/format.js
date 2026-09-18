@@ -5,12 +5,15 @@ export function safeHref(url) {
   // fixture.url comes from a third-party ticket feed and is the only
   // feed-sourced value that reaches a live href rather than textContent.
   // A javascript: URL here would run in this page's origin on tap.
-  // Falsy input (missing/empty) is rejected up front: new URL('', base)
-  // does not throw, it resolves to the page's own base href, which would
-  // otherwise slip past the scheme check below.
+  //
+  // Parsed with NO base, so anything without its own scheme throws and is
+  // rejected. Resolving against the page turned '//evil.test/x' into a CTA
+  // pointing at an arbitrary host, and whitespace into a CTA that merely
+  // reloaded the monitor - at the moment the user is racing for a
+  // one-per-customer ticket.
   if (!url) return null;
   try {
-    const parsed = new URL(String(url), location.href);
+    const parsed = new URL(String(url));
     return (parsed.protocol === 'https:' || parsed.protocol === 'http:')
       ? parsed.href : null;
   } catch {
@@ -28,12 +31,16 @@ export function ago(seconds) {
   return `${Math.round(mins / 60)} h ago`;
 }
 
-export function liveSummary(status, ageSeconds) {
+export function liveSummary(status, ageSeconds, lastSuccessSeconds) {
   // What a screen reader hears. Kept pure and tested because it is the
   // only channel by which a non-sighted user learns the monitor died.
   if (!status) return 'The monitor could not be reached.';
   if (status.error) {
-    return `The last check failed: ${status.error}. Checked ${ago(ageSeconds)}.`;
+    // The counts are still on screen but they are not current, and a
+    // screen-reader user has no badge colour to tell them so.
+    const since = typeof lastSuccessSeconds === 'number'
+      ? ` The figures shown were last confirmed ${ago(lastSuccessSeconds)}.` : '';
+    return `The last check failed: ${status.error}. Checked ${ago(ageSeconds)}.${since}`;
   }
   const n = status.buyable ?? 0;
   return `${n} seat${n === 1 ? '' : 's'} buyable, checked ${ago(ageSeconds)}.`;

@@ -74,3 +74,51 @@ test('liveSummary announces a failed check rather than a seat count', () => {
 test('liveSummary handles no document at all', () => {
   assert.match(liveSummary(null, NaN), /could not be reached/i);
 });
+
+test('a protocol-relative url cannot redirect the CTA to another host', () => {
+  // The reviewer's probe: this used to resolve to https://evil.test/x and
+  // render as a perfectly normal "Open the shop" button.
+  assert.equal(safeHref('//evil.test/x'), null);
+});
+
+test('a site-relative url is rejected rather than pointed at this page', () => {
+  assert.equal(safeHref('/evil'), null);
+  assert.equal(safeHref('evil'), null);
+  assert.equal(safeHref('../evil'), null);
+});
+
+test('whitespace does not become a CTA that reloads the monitor', () => {
+  // Worst case of all: the button looks live, and tapping it costs the user
+  // the seconds they were racing for.
+  assert.equal(safeHref('   '), null);
+  assert.equal(safeHref('\n\t'), null);
+});
+
+test('a non-string feed value is rejected', () => {
+  assert.equal(safeHref(12345), null);
+  assert.equal(safeHref({}), null);
+  assert.equal(safeHref([]), null);
+});
+
+test('safeHref does not consult the page it is running on', () => {
+  // Nothing below has its own scheme, so nothing may be accepted, whatever
+  // location happens to say.
+  const saved = globalThis.location;
+  globalThis.location = { href: 'https://assafatias.github.io/ticket-monitor/' };
+  assert.equal(safeHref('/evil'), null);
+  assert.equal(safeHref('//evil.test/x'), null);
+  globalThis.location = saved;
+});
+
+test('liveSummary tells a screen reader how old the figures really are', () => {
+  // The badge colour is the sighted user's cue; this is the only one a
+  // screen-reader user gets.
+  const t = liveSummary({ buyable: 393, error: 'feed timed out' }, 12, 21600);
+  assert.match(t, /last check failed/i);
+  assert.match(t, /last confirmed 6 h ago/);
+});
+
+test('liveSummary omits the confirmation clause when there is nothing to say', () => {
+  const t = liveSummary({ buyable: 0, error: 'feed timed out' }, 12);
+  assert.doesNotMatch(t, /last confirmed/);
+});

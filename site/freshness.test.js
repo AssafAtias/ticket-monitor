@@ -2,7 +2,7 @@
 // what stops a dead monitor from looking like a quiet one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { freshness } from './freshness.js';
+import { freshness, freshnessFor } from './freshness.js';
 
 test('a recent check is normal', () => {
   assert.equal(freshness(0), 'ok');
@@ -29,4 +29,33 @@ test('an unusable age is treated as down, never as fresh', () => {
   assert.equal(freshness(NaN), 'down');
   assert.equal(freshness(null), 'down');
   assert.equal(freshness(undefined), 'down');
+});
+
+test('an errored document never reads as ok, however recent it is', () => {
+  // The failed poll's own timestamp is fresh. The numbers it carries are
+  // not, and a green badge over six-hour-old counts is the exact way a
+  // blind monitor passes for a healthy one.
+  assert.equal(freshnessFor(10, true), 'late');
+  assert.equal(freshnessFor(0, true), 'late');
+  assert.equal(freshnessFor(599, true), 'late');
+});
+
+test('an errored document that is also old still reads as down', () => {
+  assert.equal(freshnessFor(45 * 60, true), 'down');
+  assert.equal(freshnessFor(2700, true), 'down');
+});
+
+test('an errored document already late is not downgraded back', () => {
+  assert.equal(freshnessFor(900, true), 'late');
+});
+
+test('a clean document is graded exactly as before', () => {
+  assert.equal(freshnessFor(10, false), 'ok');
+  assert.equal(freshnessFor(700, false), 'late');
+  assert.equal(freshnessFor(3600, false), 'down');
+});
+
+test('an unusable age with an error is still down, not softened to late', () => {
+  assert.equal(freshnessFor(NaN, true), 'down');
+  assert.equal(freshnessFor(undefined, true), 'down');
 });

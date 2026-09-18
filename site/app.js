@@ -1,4 +1,4 @@
-import { freshness } from './freshness.js';
+import { freshnessFor } from './freshness.js';
 import { safeHref, ago, kickoff, liveSummary } from './format.js';
 
 // The page is served from GitHub Pages but the data lives on the `data`
@@ -22,6 +22,18 @@ const STATUS_TEXT = {
   down: age => `LAST CHECKED ${ago(age)} — THE MONITOR MAY BE DOWN`,
 };
 
+// A failed poll still has a fresh generated_at, so the normal wording would
+// read "checked 12s ago" over numbers nobody has confirmed for hours.
+const ERROR_STATUS_TEXT = {
+  late: age => `TRIED ${ago(age)} — that check FAILED`,
+  down: age => `TRIED ${ago(age)} — THE MONITOR MAY BE DOWN`,
+};
+
+function secondsSince(iso) {
+  const stamp = new Date(iso ?? '').getTime();
+  return Number.isFinite(stamp) ? (Date.now() - stamp) / 1000 : null;
+}
+
 function announce(text) {
   const live = document.getElementById('live');
   if (live && live.textContent !== text) live.textContent = text;
@@ -39,9 +51,33 @@ function render(status, ageSeconds) {
     card.append(el('p', 'when', fixture.venue ? `${when} · ${fixture.venue}` : when));
   }
 
+  if (status.error) {
+    // Above the count, not below it: on a phone the error box used to sit
+    // under a 46px number and a full tier table, off the bottom of the
+    // screen, while the page read as healthy.
+    card.append(el('p', 'error',
+      `Last poll FAILED: ${status.error}. The figures below are the last ` +
+      'ones we could confirm, not current ones.'));
+  }
+
+  if (status.alert_delivered === false) {
+    // Telegram is the only channel. If it failed, the seats in this card may
+    // never have been announced anywhere - the worst outcome available, so
+    // it goes at the top too.
+    card.append(el('p', 'error',
+      'The Telegram alert for these seats FAILED to send.'));
+  }
+
   card.append(el('p', 'count', String(status.buyable ?? 0)));
   card.append(el('p', 'count-label',
     status.buyable === 1 ? 'seat buyable' : 'seats buyable'));
+
+  const confirmedAge = secondsSince(status.last_success_at);
+  if (status.error) {
+    card.append(el('p', 'stale', confirmedAge === null
+      ? 'never confirmed'
+      : `last confirmed ${ago(confirmedAge)}`));
+  }
 
   if (status.tiers && status.tiers.length) {
     const table = el('table');
@@ -73,22 +109,14 @@ function render(status, ageSeconds) {
       `max ${status.max_per_order} per customer · sign in before it fires`));
   }
 
-  if (status.error) {
-    card.append(el('p', 'error', `Last poll failed: ${status.error}`));
-  }
+  const level = freshnessFor(ageSeconds, Boolean(status.error));
+  const text = (status.error && ERROR_STATUS_TEXT[level]) || STATUS_TEXT[level];
+  card.append(el('p', `status ${level}`, text(ageSeconds)));
+  document.title = status.error
+    ? '! · Ticket Monitor' : `${status.buyable ?? 0} · Ticket Monitor`;
 
-  if (status.alert_delivered === false) {
-    // Telegram is the only channel. If it failed, the seats in this card may
-    // never have been announced anywhere.
-    card.append(el('p', 'error',
-      'The Telegram alert for these seats FAILED to send.'));
-  }
-
-  const level = freshness(ageSeconds);
-  card.append(el('p', `status ${level}`, STATUS_TEXT[level](ageSeconds)));
-  document.title = `${status.buyable ?? 0} · Ticket Monitor`;
-
-  announce(liveSummary(status, ageSeconds));
+  announce(liveSummary(status, ageSeconds,
+                       confirmedAge === null ? undefined : confirmedAge));
 }
 
 function renderUnreachable(message) {
