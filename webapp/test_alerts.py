@@ -175,16 +175,30 @@ class TestAlertText(unittest.TestCase):
         self.assertEqual(t.count("<b>"), t.count("</b>"))
 
     def test_the_shop_link_survives_even_when_seats_are_dropped(self):
-        """Losing the link would make the alert useless exactly when it matters."""
-        fat = [monitor.Seat(f"s{i}", "F", "1", "1", "F", "&" * 5000, 155)
-               for i in range(50)]
+        """Losing the link would make the alert useless exactly when it matters.
+
+        Reaching 4096 takes every bounded value at its maximum AND every
+        character escaping to five: one fat field is not enough once each is
+        capped on its own. The previous version of this test dropped nothing -
+        instrumentation showed zero pops - and its bullet-count assertion was
+        satisfied by the unconditional "...and N more" line, which is present
+        whether the loop runs or not. This data drops two lines.
+        """
+        fat = [monitor.Seat(f"s{i}", "&" * 200, "&" * 200, "&" * 200,
+                            "&" * 200, "&" * 200, 155) for i in range(20)]
         doc = status_doc(fat)
-        doc["max_per_order"] = "9" * 5000
+        doc["max_per_order"] = "&" * 10
         doc["fixture"]["name"] = "&" * 80
+        doc["fixture"]["url"] = ("https://tickets.leaan.net/event/--02j286"
+                                 + "&" * 200)
         t = alerts.alert_text(doc, fat)
+
+        seat_lines = [line for line in t.splitlines()
+                      if line.startswith("• ") and "more" not in line]
+        self.assertLess(len(seat_lines), alerts.SEATS_IN_ALERT,
+                        "this data is supposed to force the shrink loop to pop")
+        self.assertLessEqual(len(t), alerts.MAX_TELEGRAM_CHARS)
         self.assertIn("https://tickets.leaan.net/event/--02j286", t)
-        self.assertLess(t.count("•"), len(fat),
-                        "expected the shrink loop to have dropped seat lines")
         self.assertEqual(t.count("<b>"), t.count("</b>"))
 
     def test_an_oversized_max_per_order_cannot_blow_the_limit(self):

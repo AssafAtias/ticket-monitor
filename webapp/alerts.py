@@ -61,8 +61,11 @@ def alert_text(status: dict, seats) -> str:
     send() would retry the identical rejected text and give up silently. So
     every interpolated value is sliced first, then escaped. With the seat
     list empty, head (~432 chars: <b>{N TICKETS AVAILABLE - 80-char name})
-    plus tail (~1037 chars: blank line, "Max {10-char count} per customer",
-    200-char URL) = ~1469 chars, comfortably under 4096. Seat lines are
+    plus tail (~1077 chars: blank line, "Max {10-char count} per customer",
+    200-char URL) = ~1509 chars, comfortably under 4096. Each of those three
+    values is counted at 5x its slice, because "&" escapes to "&amp;" and a
+    feed value may be nothing but ampersands - including max_per_order, which
+    an earlier version of this arithmetic counted unescaped. Seat lines are
     dropped whole from the tail until the message fits. A seat line is
     expendable; the link is not.
     """

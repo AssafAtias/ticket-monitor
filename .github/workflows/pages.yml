@@ -17,7 +17,10 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # Never cancel a deployment that is already running: GitHub's own guidance
+  # for deployment concurrency groups, and a half-deployed page is worse than
+  # a queued one.
+  cancel-in-progress: false
 
 jobs:
   deploy:
