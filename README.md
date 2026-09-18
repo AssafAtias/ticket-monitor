@@ -188,8 +188,11 @@ carries forward are labelled with when they were last confirmed.
 ## Telegram setup
 
 > **`config.json` is committed to this repository and must never contain
-> credentials.** Both values below are read from the environment, and only from
-> the environment. An earlier draft of this README said to put them in
+> credentials.** The environment variables below take precedence and are the
+> only place the hosted deployment supplies them — but the config loader
+> overlays them onto whatever `config.json` holds, so a token left in that
+> committed file would still be read and used. That is exactly why it must
+> never be there. An earlier draft of this README said to put them in
 > `config.json`; following it published a live bot token and cost a rotation.
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
