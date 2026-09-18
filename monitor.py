@@ -25,6 +25,7 @@ import argparse
 import dataclasses
 import datetime
 import gzip
+import http.client
 import json
 import os
 import pathlib
@@ -404,6 +405,13 @@ def breakdown(status_json, seats, contingents, shop, now=None) -> dict:
 # -------------------------------------------------------------- http layer
 
 
+# A short read reaches us in three shapes: a truncated gzip member (EOFError),
+# a short HTTP body (IncompleteRead), and a body that decompressed cleanly but
+# was cut mid-document, which only shows up later as a parse failure
+# (ValueError). Retrying all three is the point; catching only one was the bug.
+TRANSIENT = (OSError, EOFError, http.client.IncompleteRead, ValueError)
+
+
 def fetch(url: str, timeout=45) -> bytes:
     req = urllib.request.Request(url, headers={
         "User-Agent": UA,
@@ -427,11 +435,10 @@ def fetch_with_retry(url, attempts=3, timeout=45, label=""):
     for i in range(attempts):
         try:
             return fetch_json(url, timeout)
-        except (urllib.error.URLError, urllib.error.HTTPError,
-                TimeoutError, json.JSONDecodeError, OSError) as exc:
+        except TRANSIENT as exc:
             last = exc
             if i < attempts - 1:
-                time.sleep(2 * (i + 1))
+                time.sleep(2 ** i)
     raise RuntimeError(f"{label or url} failed after {attempts} attempts: {last}")
 
 
@@ -454,7 +461,7 @@ def fetch_next_data(url, attempts=3, label="", fetcher=None, sleep=None) -> dict
     for attempt in range(attempts):
         try:
             return extract_next_data(fetcher(url).decode("utf-8", "replace"))
-        except (ValueError, OSError) as exc:
+        except TRANSIENT as exc:
             last = exc
             if attempt < attempts - 1:
                 sleep(2 ** attempt)

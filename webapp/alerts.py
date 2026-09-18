@@ -17,6 +17,8 @@ MAX_NAME_CHARS = 80
 MAX_URL_CHARS = 200
 MAX_SEAT_CHARS = 100
 MAX_COUNT_CHARS = 10
+MAX_ERROR_CHARS = 300
+FAILURES_BEFORE_ESCALATION = 5
 
 
 def send(cfg, text: str, attempts: int = 3, sender=None, sleep=None) -> bool:
@@ -99,6 +101,22 @@ def heartbeat_text(status: dict) -> str:
                 f"{_esc(str(status['error'])[:300])}")
     return (f"Ticket monitor alive. Watching {_esc(str(fixture.get('name', 'nothing'))[:MAX_NAME_CHARS])}"
             f" - {status.get('buyable', 0)} seat(s) buyable.")
+
+
+def failure_escalation_text(status: dict, failures) -> str:
+    """The message sent once a run of polls has all failed.
+
+    The desktop build toasted after five consecutive failures; hosted, there
+    is no screen to toast at, so without this a blind monitor says nothing
+    until the next daily heartbeat - up to 24 hours of looking healthy while
+    seeing nothing. The error is sliced then escaped, like every other
+    interpolated value, because it can carry a third-party URL or response
+    body.
+    """
+    error = _esc(str(status.get("error") or "unknown")[:MAX_ERROR_CHARS])
+    return (f"Ticket monitor has FAILED {_esc(str(failures)[:MAX_COUNT_CHARS])} "
+            f"polls in a row - it is not watching anything right now.\n"
+            f"Last error: {error}")
 
 
 def heartbeat_due(last_sent, today: str) -> bool:

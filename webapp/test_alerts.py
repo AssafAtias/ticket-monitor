@@ -220,5 +220,44 @@ class TestHeartbeat(unittest.TestCase):
         self.assertIn("feed timed out", alerts.heartbeat_text(doc))
 
 
+class TestFailureEscalationText(unittest.TestCase):
+    """The hosted replacement for the desktop build's five-failure toast."""
+
+    def doc(self, error="status feed timed out"):
+        d = status_doc([])
+        d["error"] = error
+        return d
+
+    def test_says_how_many_polls_failed_and_why(self):
+        t = alerts.failure_escalation_text(self.doc(), 5)
+        self.assertIn("5", t)
+        self.assertIn("status feed timed out", t)
+
+    def test_says_plainly_that_nothing_is_being_watched(self):
+        """The whole point is that the reader must not assume silence means
+        no tickets."""
+        self.assertIn("not watching", alerts.failure_escalation_text(self.doc(), 5))
+
+    def test_escapes_html_so_telegram_cannot_reject_it(self):
+        t = alerts.failure_escalation_text(self.doc("boom & <crash>"), 5)
+        self.assertIn("&amp;", t)
+        self.assertIn("&lt;crash&gt;", t)
+        self.assertNotIn("<crash>", t)
+
+    def test_a_huge_error_string_cannot_blow_the_size_limit(self):
+        """Errors can carry a third-party response body."""
+        t = alerts.failure_escalation_text(self.doc("&" * 20000), 5)
+        self.assertLess(len(t), alerts.MAX_TELEGRAM_CHARS)
+
+    def test_a_missing_error_still_produces_a_usable_message(self):
+        d = status_doc([])
+        d["error"] = None
+        self.assertIn("unknown", alerts.failure_escalation_text(d, 5))
+
+    def test_the_failure_count_is_bounded_too(self):
+        t = alerts.failure_escalation_text(self.doc(), "9" * 5000)
+        self.assertLess(len(t), alerts.MAX_TELEGRAM_CHARS)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

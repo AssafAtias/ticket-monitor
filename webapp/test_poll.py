@@ -299,5 +299,178 @@ class TestNoSecretsLeak(Base):
             self.assertNotIn("99", blob.replace('"alerted": 1', ""))
 
 
+class TestMidPollFailureDoesNotConsumeAlerts(Base):
+    """new_among() marks seats the moment it is asked what is new.
+
+    Anything that raises between that call and a successful send is caught
+    by run_once's except Exception, and the state written afterwards would
+    still carry those ids - so the seats would be recorded as announced
+    without a message ever being sent, and never alerted again.
+    """
+
+    def test_an_exception_after_new_among_leaves_the_seats_unalerted(self):
+        FakeMonitor.seats_to_return = [seat("a"), seat("b")]
+        with unittest.mock.patch.object(poll.report, "build_status",
+                                        side_effect=RuntimeError("kaboom")):
+            status = self.run_once()
+        self.assertIn("kaboom", status["error"])
+        self.assertEqual(self.read("state.json")["alerted"], [])
+
+    def test_the_next_poll_still_alerts_those_seats(self):
+        FakeMonitor.seats_to_return = [seat("a")]
+        with unittest.mock.patch.object(poll.report, "build_status",
+                                        side_effect=RuntimeError("kaboom")):
+            self.run_once()
+        self.sent.messages.clear()
+        self.run_once(now=NOW + datetime.timedelta(minutes=5))
+        self.assertTrue(any("AVAILABLE" in m for m in self.sent.messages))
+
+    def test_seats_announced_before_the_failure_are_not_re_announced(self):
+        """Restoring state must restore what was on disk, not wipe it."""
+        FakeMonitor.seats_to_return = [seat("a")]
+        self.run_once()
+        self.sent.messages.clear()
+        FakeMonitor.seats_to_return = [seat("a"), seat("b")]
+        with unittest.mock.patch.object(poll.report, "build_status",
+                                        side_effect=RuntimeError("kaboom")):
+            self.run_once(now=NOW + datetime.timedelta(minutes=5))
+        self.assertEqual(self.read("state.json")["alerted"], ["a"])
+
+
+class TestUnreadableStateFile(Base):
+    """run_once promises never to raise, and the reads happen before its try.
+
+    A single non-UTF-8 byte in state.json used to escape as a
+    UnicodeDecodeError, fail the Poll step, skip Publish, and leave the page
+    with nothing - the one outcome the whole error path exists to prevent.
+    """
+
+    def test_invalid_utf8_in_state_is_treated_as_no_state(self):
+        (self.dir / "state.json").write_bytes(bytes([0xff, 0xfe, 0x00]) + b"rubbish")
+        status = self.run_once()
+        self.assertIsInstance(status, dict)
+        self.assertTrue((self.dir / "status.json").exists())
+
+    def test_invalid_utf8_in_status_does_not_stop_the_run(self):
+        (self.dir / "status.json").write_bytes(bytes([0xff, 0xfe]) + b"junk")
+        self.assertIsInstance(self.run_once(), dict)
+
+    def test_read_json_returns_the_default_for_undecodable_bytes(self):
+        path = self.dir / "weird.json"
+        path.write_bytes(bytes([0xff, 0xfe, 0x00]) + b"rubbish")
+        self.assertEqual(poll.read_json(path, {}), {})
+
+    def test_an_unexpected_read_failure_still_publishes(self):
+        """read_json absorbs what it knows about; the guard covers the rest."""
+        with unittest.mock.patch.object(poll, "read_json",
+                                        side_effect=RuntimeError("bad disk")):
+            status = self.run_once()
+        self.assertIsInstance(status, dict)
+        self.assertTrue((self.dir / "status.json").exists())
+
+
+class TestHeartbeatDelivery(Base):
+    def test_a_failed_heartbeat_is_not_recorded_as_sent(self):
+        """It is the day's only liveness signal; a failed send must not
+        consume it."""
+        self.sent = Recorder(ok=False)
+        self.run_once()
+        self.assertEqual(self.read("state.json")["last_heartbeat"], "")
+
+    def test_it_is_retried_on_the_next_poll_the_same_day(self):
+        self.sent = Recorder(ok=False)
+        self.run_once()
+        self.sent = Recorder(ok=True)
+        self.run_once(now=NOW + datetime.timedelta(minutes=5))
+        self.assertTrue(any("alive" in m.lower() for m in self.sent.messages))
+        self.assertEqual(self.read("state.json")["last_heartbeat"], "2026-09-17")
+
+
+class TestFailureEscalation(Base):
+    """The hosted stand-in for the desktop build's five-failure toast."""
+
+    ESCALATION = "polls in a row"
+
+    def escalations(self):
+        return [m for m in self.sent.messages if self.ESCALATION in m]
+
+    def fail_polls(self, count, start=1):
+        FakeMonitor.raise_on_refresh = RuntimeError("upstream down")
+        for i in range(start, start + count):
+            self.run_once(now=NOW + datetime.timedelta(minutes=5 * i))
+
+    def test_failures_are_counted_in_state(self):
+        self.fail_polls(3)
+        self.assertEqual(self.read("state.json")["failures"], 3)
+
+    def test_nothing_is_escalated_before_five(self):
+        self.fail_polls(4)
+        self.assertEqual(self.escalations(), [])
+
+    def test_the_fifth_consecutive_failure_escalates_once(self):
+        self.fail_polls(5)
+        self.assertEqual(len(self.escalations()), 1)
+        self.assertIn("upstream down", self.escalations()[0])
+
+    def test_a_long_outage_does_not_send_hundreds_of_messages(self):
+        self.fail_polls(20)
+        self.assertEqual(len(self.escalations()), 1)
+
+    def test_a_successful_poll_resets_the_counter_and_re_arms_it(self):
+        self.fail_polls(5)
+        FakeMonitor.raise_on_refresh = None
+        self.run_once(now=NOW + datetime.timedelta(hours=1))
+        self.assertEqual(self.read("state.json")["failures"], 0)
+        self.assertIs(self.read("state.json")["escalated"], False)
+        self.sent.messages.clear()
+        self.fail_polls(5, start=20)
+        self.assertEqual(len(self.escalations()), 1)
+
+    def test_an_undelivered_escalation_is_not_recorded_as_sent(self):
+        """Same rule as the heartbeat: a failed send must not burn the signal."""
+        self.sent = Recorder(ok=False)
+        self.fail_polls(5)
+        self.assertIs(self.read("state.json")["escalated"], False)
+        self.sent = Recorder(ok=True)
+        self.fail_polls(1, start=6)
+        self.assertEqual(len(self.escalations()), 1)
+
+    def test_a_corrupt_failure_count_is_treated_as_zero(self):
+        (self.dir / "state.json").write_text('{"failures": "lots"}',
+                                             encoding="utf-8")
+        self.fail_polls(1)
+        self.assertEqual(self.read("state.json")["failures"], 1)
+
+    def test_an_escalation_that_raises_does_not_stop_publication(self):
+        def boom(cfg, text, **kw):
+            if TestFailureEscalation.ESCALATION in text:
+                raise RuntimeError("telegram exploded")
+            return True
+        FakeMonitor.raise_on_refresh = RuntimeError("upstream down")
+        for i in range(1, 6):
+            poll.run_once({"alert_below_price": None}, self.dir,
+                          now=NOW + datetime.timedelta(minutes=5 * i),
+                          monitor_factory=FakeMonitor, send=boom)
+        self.assertTrue((self.dir / "status.json").exists())
+
+
+class TestLastSuccessAt(Base):
+    def test_a_good_poll_stamps_it_with_now(self):
+        self.run_once()
+        self.assertEqual(self.read("status.json")["last_success_at"],
+                         NOW.isoformat())
+
+    def test_a_failed_poll_carries_it_forward_unchanged(self):
+        """The counts on the page are as old as this, not as old as
+        generated_at."""
+        self.run_once()
+        later = NOW + datetime.timedelta(hours=6)
+        FakeMonitor.raise_on_refresh = RuntimeError("boom")
+        self.run_once(now=later)
+        doc = self.read("status.json")
+        self.assertEqual(doc["generated_at"], later.isoformat())
+        self.assertEqual(doc["last_success_at"], NOW.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -46,6 +46,10 @@ def build_status(*, fixture, shop, url, buyable, counts, alerted,
     """
     return {
         "generated_at": generated_at.isoformat(),
+        # A successful poll's counts are current by definition. On a failed
+        # poll build_error_status carries this forward instead, so the page
+        # can say when the numbers it is showing were last true.
+        "last_success_at": generated_at.isoformat(),
         "fixture": {
             "name": fixture.name if fixture else shop.event_name,
             "url": url,
@@ -70,7 +74,8 @@ def build_error_status(previous, generated_at, error: str) -> dict:
     Everything we last knew is carried forward and `error` is set, so the
     page shows a failure rather than stale success. generated_at still
     advances, because a failed check is a check: staleness measures when we
-    last tried, not when we last succeeded.
+    last tried, not when we last succeeded - which is what last_success_at is
+    for, and why it is carried forward rather than refreshed.
     """
     base = dict(previous or {})
     base.setdefault("fixture", None)
@@ -82,6 +87,9 @@ def build_error_status(previous, generated_at, error: str) -> dict:
     base.setdefault("cheapest", [])
     base.setdefault("alerted", 0)
     base.setdefault("alert_delivered", None)
+    # Carried forward, never advanced: generated_at says when we last tried,
+    # last_success_at says when the numbers on screen were last confirmed.
+    base.setdefault("last_success_at", None)
     base["generated_at"] = generated_at.isoformat()
     base["error"] = error
     return base

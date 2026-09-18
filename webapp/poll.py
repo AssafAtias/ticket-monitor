@@ -25,7 +25,7 @@ def read_json(path: pathlib.Path, default=None):
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return default
     return data if isinstance(data, dict) else default
 
@@ -55,11 +55,26 @@ def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
     send = send or alerts.send
 
     status_path, state_path = data_dir / "status.json", data_dir / "state.json"
-    previous = read_json(status_path)
-    stored = read_json(state_path, {}) or {}
+    previous, stored = None, {}
+    try:
+        # These two reads sit above the poll's own try. read_json absorbs the
+        # corruptions it knows about, but anything it does not would escape
+        # run_once, fail the Poll step, skip Publish, and leave the page
+        # showing a document from before the failure with nothing to say why.
+        previous = read_json(status_path)
+        stored = read_json(state_path, {}) or {}
+    except Exception as exc:
+        monitor.log(f"reading the previous documents failed: {exc}")
+        previous, stored = None, {}
+
     state = monitor.AlertState(stored.get("alerted") or [],
                                stored.get("event") or "")
     last_heartbeat = stored.get("last_heartbeat") or ""
+    try:
+        failures = int(stored.get("failures") or 0)
+    except (TypeError, ValueError):
+        failures = 0
+    escalated = bool(stored.get("escalated"))
 
     try:
         mon = monitor_factory(cfg)
@@ -98,13 +113,34 @@ def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
         status["alert_delivered"] = delivered
     except Exception as exc:
         monitor.log(f"poll failed: {exc}")
+        # new_among() may already have marked seats as alerted before the
+        # failure. Keeping that would silence them forever, which is the exact
+        # bug the delivery-failure un-marking exists to prevent.
+        state = monitor.AlertState(stored.get("alerted") or [],
+                                   stored.get("event") or "")
         status = report.build_error_status(previous, now, str(exc))
+
+    if status.get("error"):
+        failures += 1
+    else:
+        failures, escalated = 0, False
+
+    if failures >= alerts.FAILURES_BEFORE_ESCALATION and not escalated:
+        # The desktop build toasted after five consecutive failures. Hosted,
+        # there is nobody at the screen, so this is the only thing between a
+        # blind monitor and the next daily heartbeat.
+        try:
+            escalated = bool(send(cfg,
+                                  alerts.failure_escalation_text(status, failures)))
+        except Exception as exc:
+            monitor.log(f"failure escalation failed: {exc}")
 
     today = now.date().isoformat()
     try:
         if alerts.heartbeat_due(last_heartbeat, today):
-            send(cfg, alerts.heartbeat_text(status))
-            last_heartbeat = today
+            # Only burn the day's liveness signal if it actually went out.
+            if send(cfg, alerts.heartbeat_text(status)):
+                last_heartbeat = today
     except Exception as exc:
         monitor.log(f"heartbeat failed: {exc}")
 
@@ -113,7 +149,8 @@ def run_once(cfg, data_dir, now=None, monitor_factory=None, send=None) -> dict:
         _write(status_path, status)
         _write(state_path, {"event": state.event, "alerted": sorted(state.alerted),
                             "updated": now.isoformat(),
-                            "last_heartbeat": last_heartbeat})
+                            "last_heartbeat": last_heartbeat,
+                            "failures": failures, "escalated": escalated})
     except Exception as exc:
         monitor.log(f"publishing failed: {exc}")
     return status

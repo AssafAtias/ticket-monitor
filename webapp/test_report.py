@@ -164,5 +164,56 @@ class TestBuildErrorStatus(unittest.TestCase):
         self.assertEqual(s["buyable"], 0)
 
 
+class TestLastSuccessAt(unittest.TestCase):
+    """When the numbers on the page were last true, as opposed to when we
+    last tried to check them.
+
+    Without it, a six-hour upstream outage renders as a full tier table under
+    a fresh "checked 12s ago": carried-forward counts wearing a current
+    timestamp.
+    """
+
+    def good(self, generated_at=NOW):
+        return report.build_status(fixture=FIXTURE, shop=SHOP, url=FIXTURE.url,
+                                   buyable=[seat("s1", 155, "אי פלוס")],
+                                   counts=COUNTS, alerted=0,
+                                   generated_at=generated_at)
+
+    def test_a_successful_poll_is_current_by_definition(self):
+        s = self.good()
+        self.assertEqual(s["last_success_at"], s["generated_at"])
+
+    def test_a_failed_poll_carries_it_forward_rather_than_advancing_it(self):
+        later = NOW + datetime.timedelta(hours=6)
+        s = report.build_error_status(self.good(), later, "boom")
+        self.assertEqual(s["generated_at"], later.isoformat())
+        self.assertEqual(s["last_success_at"], NOW.isoformat())
+
+    def test_it_survives_a_run_of_consecutive_failures(self):
+        """Six hours of failures must not creep the timestamp forward."""
+        doc = self.good()
+        for minutes in range(5, 365, 5):
+            doc = report.build_error_status(
+                doc, NOW + datetime.timedelta(minutes=minutes), "still down")
+        self.assertEqual(doc["last_success_at"], NOW.isoformat())
+
+    def test_it_is_null_when_nothing_ever_succeeded(self):
+        """First ever run fails: there is no moment the counts were true."""
+        s = report.build_error_status(None, NOW, "boom")
+        self.assertIsNone(s["last_success_at"])
+
+    def test_a_previous_document_written_before_the_field_existed(self):
+        """The data branch may hold a status.json from the old contract."""
+        legacy = self.good()
+        del legacy["last_success_at"]
+        s = report.build_error_status(legacy, NOW, "boom")
+        self.assertIsNone(s["last_success_at"])
+
+    def test_a_recovery_stamps_it_again(self):
+        later = NOW + datetime.timedelta(hours=6)
+        self.assertEqual(self.good(generated_at=later)["last_success_at"],
+                         later.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

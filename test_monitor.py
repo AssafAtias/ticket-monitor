@@ -6,6 +6,7 @@ implementation that just counts "free" in the JSON fails there.
 """
 import copy
 import datetime
+import http.client
 import json
 import os
 import pathlib
@@ -529,6 +530,95 @@ class TestTruncatedPageRetry(unittest.TestCase):
 
         data = monitor.fetch_next_data("u", fetcher=flaky, sleep=lambda _: None)
         self.assertEqual(data["props"]["ok"], True)
+        self.assertEqual(len(calls), 3)
+
+
+class TestShortReadShapes(unittest.TestCase):
+    """A short read arrives in three shapes, and all three must be retried.
+
+    gzip.decompress on a truncated member raises EOFError and
+    HTTPResponse.read() on a short body raises http.client.IncompleteRead.
+    Neither is OSError or ValueError, so the original except clause let the
+    two commonest truncations escape on the first attempt - the exact
+    failure the retry was built to absorb.
+    """
+
+    GOOD = ('<html><script id="__NEXT_DATA__" type="application/json">'
+            '{"props": {"ok": true}}</script></html>')
+
+    def flaky_fetcher(self, error, failures=2):
+        calls = []
+
+        def fetch(url, timeout=45):
+            calls.append(url)
+            if len(calls) <= failures:
+                raise error
+            return self.GOOD.encode("utf-8")
+        return fetch, calls
+
+    def test_next_data_retries_a_truncated_gzip_member(self):
+        fetch, calls = self.flaky_fetcher(EOFError("Compressed file ended "
+                                                  "before the end-of-stream "
+                                                  "marker was reached"))
+        data = monitor.fetch_next_data("u", fetcher=fetch, sleep=lambda _: None)
+        self.assertEqual(data["props"]["ok"], True)
+        self.assertEqual(len(calls), 3)
+
+    def test_next_data_retries_a_short_http_body(self):
+        fetch, calls = self.flaky_fetcher(http.client.IncompleteRead(b"partial"))
+        data = monitor.fetch_next_data("u", fetcher=fetch, sleep=lambda _: None)
+        self.assertEqual(data["props"]["ok"], True)
+        self.assertEqual(len(calls), 3)
+
+    def _retry_json(self, error, failures=2):
+        calls = []
+
+        def fetch_json(url, timeout=45):
+            calls.append(url)
+            if len(calls) <= failures:
+                raise error
+            return {"ok": True}
+
+        waits = []
+        with unittest.mock.patch.object(monitor, "fetch_json", fetch_json),                 unittest.mock.patch.object(monitor.time, "sleep", waits.append):
+            result = monitor.fetch_with_retry("u", label="status")
+        return result, calls, waits
+
+    def test_fetch_with_retry_retries_a_truncated_gzip_member(self):
+        result, calls, _ = self._retry_json(EOFError("truncated gzip"))
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 3)
+
+    def test_fetch_with_retry_retries_a_short_http_body(self):
+        result, calls, _ = self._retry_json(http.client.IncompleteRead(b"x"))
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 3)
+
+    def test_fetch_with_retry_retries_truncated_json(self):
+        """json.JSONDecodeError is a ValueError: a body cut mid-document."""
+        result, calls, _ = self._retry_json(
+            json.JSONDecodeError("Expecting value", "{\"a\":", 5))
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 3)
+
+    def test_both_helpers_back_off_the_same_way(self):
+        """Deferred T4b: 2 ** attempt in both, not 2 * (i + 1) in one."""
+        _, _, waits = self._retry_json(OSError("reset"))
+        self.assertEqual(waits, [1, 2])
+
+        next_waits = []
+        with self.assertRaises(RuntimeError):
+            monitor.fetch_next_data(
+                "u", attempts=3,
+                fetcher=self.flaky_fetcher(OSError("reset"), failures=9)[0],
+                sleep=next_waits.append)
+        self.assertEqual(waits, next_waits)
+
+    def test_a_genuine_failure_still_gives_up_with_a_runtime_error(self):
+        fetch, calls = self.flaky_fetcher(EOFError("always"), failures=9)
+        with self.assertRaises(RuntimeError):
+            monitor.fetch_next_data("u", attempts=3, fetcher=fetch,
+                                    sleep=lambda _: None)
         self.assertEqual(len(calls), 3)
 
 
