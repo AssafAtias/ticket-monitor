@@ -678,6 +678,15 @@ Expected: FAIL with `ImportError: cannot import name 'alerts' from 'webapp'`.
 
 Create `webapp/alerts.py`:
 
+> **SUPERSEDED** - this code was found defective during execution, in two
+> places. `alert_text` interpolates `{fixture.get('name')}` into `<b>...</b>`
+> unescaped and bounds the result with a blind `[:4096]` slice, which Telegram
+> rejects as malformed HTML - a rejected alert is a seat nobody was told about.
+> `send` also calls `sleep(...)` outside its `try`, so a sleep that throws
+> escapes the no-raise contract. See `.superpowers/sdd/.../progress.md`
+> Ruling 6 (escaping and boundedness). The committed implementation is
+> correct; this block is retained only as the historical argument.
+
 ```python
 """Telegram delivery.
 
@@ -1053,6 +1062,14 @@ Expected: FAIL with `ImportError: cannot import name 'poll' from 'webapp'`.
 - [ ] **Step 3: Write minimal implementation**
 
 Create `webapp/poll.py`:
+
+> **SUPERSEDED** - this code was found defective during execution.
+> `state.new_among()` marks every buyable seat as alerted, and nothing
+> un-marks them when delivery fails or when the poll raises afterwards, so a
+> seat nobody was told about can never alert again. See
+> `.superpowers/sdd/.../progress.md` Ruling 8 (delivery-failure un-marking).
+> The committed implementation is correct; this block is retained only as the
+> historical argument.
 
 ```python
 """One poll, then exit. The cron schedule is the loop.

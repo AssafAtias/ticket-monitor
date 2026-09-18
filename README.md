@@ -7,7 +7,9 @@ next game that has not been played yet.
 
 ## Where it runs
 
-Live at **https://assafatias.github.io/ticket-monitor/**.
+Once GitHub Pages is switched on for this repository the page will be served
+at **https://assafatias.github.io/ticket-monitor/**. It is not enabled yet, so
+that URL does not resolve today.
 
 A GitHub Actions cron job polls every 5 minutes, alerts to Telegram, and
 publishes `status.json` and `state.json` to the `data` branch. The page fetches that document
@@ -34,8 +36,8 @@ Leave the window open; Ctrl+C stops it. It restarts itself if it ever crashes.
 ```
 python monitor.py --once         # one check, print the breakdown, exit
 python monitor.py --test-alert   # verify the toast + Telegram path
-python -m unittest discover -p "test_*.py"   # 139 Python tests
-node --test "site/**/*.test.js"              # 18 JS tests
+python -m unittest discover -p "test_*.py"   # 187 Python tests
+node --test "site/**/*.test.js"              # 30 JS tests (keep the quotes)
 ```
 
 ## Which game it watches
@@ -109,6 +111,13 @@ A seat is only really buyable when all four hold:
 | the shop page's `__NEXT_DATA__` | categories, active tickets, prices, limits | every 5 min |
 | `/api/public/event/{id}/map?c={rev}&shrink=true` | seat ID → block/row/seat/gate | once, cached in `.cache/` |
 
+The cadences above are the **desktop loop's**: one long-lived process with a
+60-second status poll inside a 5-minute config refresh. The hosted poller has
+no loop. Each cron run is a cold start that fetches all of it once - listing,
+status, contingents, shop page, and the seat map unless the Actions cache still
+holds it - and then exits. Its effective cadence is the cron schedule, every
+5 minutes, for everything.
+
 **The 5-minute config refresh is not incidental.** A release may not be a seat
 flipping to free — it can be a whole category gaining an active ticket (gate 4
 alone holds 230 free seats waiting on exactly that), or a contingent being
@@ -116,6 +125,23 @@ released. Polling `status` alone would miss both. When a category goes on sale
 the monitor logs `!! category went ON SALE`.
 
 ## Alerts
+
+### Hosted (GitHub Actions)
+
+**Telegram is the only channel.** There is no screen to toast at and no window
+to raise, so a Telegram message that does not arrive is a seat nobody was told
+about. Three things follow from that:
+
+- a failed delivery un-marks the seats, so they stay eligible to alert again on
+  the next poll - a duplicate message is a much smaller cost than silence;
+- the page publishes whether the alert was delivered, and says so if it was not;
+- a daily heartbeat and a five-consecutive-failure escalation (below) are what
+  make a dead monitor audible.
+
+### Local (`run.cmd`)
+
+The desktop build keeps all three channels: the always-on-top window, the
+Windows toast, and Telegram if the environment supplies credentials.
 
 - **An always-on-top window** that stays until dismissed, with an "Open the
   shop" button. This is the alert that must not fail: it survives Do Not
@@ -133,25 +159,56 @@ this is ever ported:
 
 Both were verified by enumerating visible desktop windows via Win32
 `EnumWindows` + `IsWindowVisible`, rather than trusting the API's return value.
-- **Telegram**, if configured. Optional — everything else works without it.
-- **Console + `history.jsonl`**, one line per poll, so the sale's behaviour over
-  the week is reviewable after the fact.
+
+- **Telegram**, if the environment supplies credentials. Locally it is optional;
+  hosted it is the whole alerting system.
+- **Console + `history.jsonl`**, one line per poll. Local only: the hosted
+  poller never writes `history.jsonl`, and the file is gitignored. What the
+  hosted run leaves behind is `status.json` and `state.json` on the `data`
+  branch.
 
 Alerts fire only for **newly** buyable seats (`state.json`). A seat someone else
 takes is forgotten, so it can alert again if it comes back. The state records
 the game it belongs to and is dropped on rollover, because seat ids only mean
 anything within one seat map.
 
-If five polls fail in a row you get a (quiet) toast — silence should never be
-mistaken for "no tickets yet".
+If five polls fail in a row, silence should never be mistaken for "no tickets
+yet":
 
-## Telegram setup (optional)
+- **locally**, you get a (quiet) toast;
+- **hosted**, there is no toast, so the fifth consecutive failure sends one
+  Telegram message naming the last error. One message, not one per poll: the
+  flag that suppresses repeats is set only when the message is actually
+  delivered, and it resets on the first successful poll.
+
+The page will not hide it either. A document carrying an error can never show
+the fresh green badge, however recently the failed poll ran, and the counts it
+carries forward are labelled with when they were last confirmed.
+
+## Telegram setup
+
+> **`config.json` is committed to this repository and must never contain
+> credentials.** Both values below are read from the environment, and only from
+> the environment. An earlier draft of this README said to put them in
+> `config.json`; following it published a live bot token and cost a rotation.
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
 2. Send your new bot any message, then open
    `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy `message.chat.id`.
-3. Put both in `config.json` under `telegram`. No restart logic needed beyond
-   restarting the monitor.
+3. Provide them as environment variables:
+
+   | Variable | Value |
+   |---|---|
+   | `TELEGRAM_BOT_TOKEN` | the token from BotFather |
+   | `TELEGRAM_CHAT_ID` | your `message.chat.id` |
+
+   Locally, set them in the shell that runs `run.cmd`. Hosted, add them as
+   **repository secrets** (Settings → Secrets and variables → Actions); the
+   workflow passes them to the poll step and nowhere else.
+
+Both halves must be present. A token with no chat id cannot send, and the
+config loader ignores a half-configured pair rather than pretending Telegram is
+working. Neither value is ever written to `status.json` or `state.json`.
 
 ## Config
 
