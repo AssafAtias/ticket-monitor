@@ -28,6 +28,17 @@ export function ago(seconds) {
   return `${Math.round(mins / 60)} h ago`;
 }
 
+export function liveSummary(status, ageSeconds) {
+  // What a screen reader hears. Kept pure and tested because it is the
+  // only channel by which a non-sighted user learns the monitor died.
+  if (!status) return 'The monitor could not be reached.';
+  if (status.error) {
+    return `The last check failed: ${status.error}. Checked ${ago(ageSeconds)}.`;
+  }
+  const n = status.buyable ?? 0;
+  return `${n} seat${n === 1 ? '' : 's'} buyable, checked ${ago(ageSeconds)}.`;
+}
+
 export function kickoff(value) {
   // Returns a formatted local date, or null when the value is absent or
   // unparseable - new Date('nonsense') does not throw, it renders the

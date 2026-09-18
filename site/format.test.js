@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { safeHref, ago, kickoff } from './format.js';
+import { safeHref, ago, kickoff, liveSummary } from './format.js';
 
 // safeHref runs in a browser where `location` exists; node --test does not
 // provide one, so give the module a minimal stand-in.
@@ -51,4 +51,26 @@ test('kickoff returns null rather than rendering "Invalid Date"', () => {
   assert.equal(kickoff('not a date'), null);
   assert.equal(kickoff(''), null);
   assert.equal(kickoff(undefined), null);
+});
+
+test('liveSummary announces the count and the age', () => {
+  const t = liveSummary({ buyable: 3 }, 120);
+  assert.match(t, /3 seats buyable/);
+  assert.match(t, /2 min ago/);
+});
+
+test('liveSummary is singular for one seat', () => {
+  assert.match(liveSummary({ buyable: 1 }, 5), /1 seat buyable/);
+});
+
+test('liveSummary announces a failed check rather than a seat count', () => {
+  // A screen-reader user must not hear "0 seats buyable" when the truth
+  // is that the check itself failed.
+  const t = liveSummary({ buyable: 0, error: 'feed timed out' }, 60);
+  assert.match(t, /last check failed/i);
+  assert.match(t, /feed timed out/);
+});
+
+test('liveSummary handles no document at all', () => {
+  assert.match(liveSummary(null, NaN), /could not be reached/i);
 });

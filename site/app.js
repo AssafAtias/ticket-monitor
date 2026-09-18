@@ -1,5 +1,5 @@
 import { freshness } from './freshness.js';
-import { safeHref, ago, kickoff } from './format.js';
+import { safeHref, ago, kickoff, liveSummary } from './format.js';
 
 // The page is served from GitHub Pages but the data lives on the `data`
 // branch, fetched straight from raw.githubusercontent.com (which sends
@@ -21,6 +21,11 @@ const STATUS_TEXT = {
   late: age => `checked ${ago(age)} — the scheduler is running late`,
   down: age => `LAST CHECKED ${ago(age)} — THE MONITOR MAY BE DOWN`,
 };
+
+function announce(text) {
+  const live = document.getElementById('live');
+  if (live && live.textContent !== text) live.textContent = text;
+}
 
 function render(status, ageSeconds) {
   const card = document.getElementById('card');
@@ -83,45 +88,52 @@ function render(status, ageSeconds) {
   card.append(el('p', `status ${level}`, STATUS_TEXT[level](ageSeconds)));
   document.title = `${status.buyable ?? 0} · Ticket Monitor`;
 
-  const live = document.getElementById('live');
-  const summary = `${status.buyable ?? 0} seats buyable, checked ${ago(ageSeconds)}`;
-  if (live && live.textContent !== summary) live.textContent = summary;
+  announce(liveSummary(status, ageSeconds));
 }
 
 function renderUnreachable(message) {
   const card = document.getElementById('card');
   card.replaceChildren();
   card.append(el('h1', null, 'Cannot reach the monitor'));
-  card.append(el('p', 'error', message));
+  card.append(el('p', 'error', `Could not show the monitor: ${message}`));
   card.append(el('p', 'status down',
-    'Could not load or read status.json. The monitor itself may still be running.'));
+    'The monitor itself may still be running.'));
+  announce(`The monitor could not be reached: ${message}`);
 }
 
 let lastShown = 0;
 
 async function tick() {
+  let status;
   try {
     // Cache-bust: raw.githubusercontent.com caches for about five minutes.
     const resp = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const status = await resp.json();
-    const stamp = new Date(status.generated_at).getTime();
-    // Responses can land out of order; an older document must never
-    // replace a newer one already on screen.
-    if (Number.isFinite(stamp)) {
-      if (stamp < lastShown) return;
-      lastShown = stamp;
-    }
-    render(status, (Date.now() - stamp) / 1000);
+    status = await resp.json();
   } catch (err) {
     const message = String((err && err.message) || err);
-    if (lastShown) {
-      // Keep the last reading visible. Its own staleness badge is more
-      // honest than discarding real data over one blip.
-      noteRefreshFailure(message);
-    } else {
-      renderUnreachable(message);
-    }
+    // Keep the last reading visible. Its own staleness badge is more
+    // honest than discarding real data over one blip.
+    if (lastShown) noteRefreshFailure(message);
+    else renderUnreachable(message);
+    return;
+  }
+
+  const stamp = new Date(status.generated_at).getTime();
+  // Responses can land out of order; an older document must never
+  // replace a newer one already on screen.
+  if (Number.isFinite(stamp)) {
+    if (stamp < lastShown) return;
+    lastShown = stamp;
+  }
+
+  try {
+    render(status, (Date.now() - stamp) / 1000);
+  } catch (err) {
+    // A rendering fault is our bug, not the data's. Saying "could not
+    // load status.json" would send someone debugging a file that is fine.
+    renderUnreachable(
+      `loaded the data but could not render it: ${String((err && err.message) || err)}`);
   }
 }
 
@@ -134,6 +146,7 @@ function noteRefreshFailure(message) {
     card.append(note);
   }
   note.textContent = `Could not refresh (${message}). Showing the last reading.`;
+  announce(`Could not refresh: ${message}. Showing the last reading.`);
 }
 
 tick();
