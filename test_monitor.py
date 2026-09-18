@@ -452,5 +452,85 @@ class TestConfigSecrets(unittest.TestCase):
         self.assertFalse((cfg.get("telegram") or {}).get("bot_token"))
 
 
+class TestTruncatedPageRetry(unittest.TestCase):
+    """The ticket office intermittently returns a short read.
+
+    gzip.decompress yields the partial body without raising, so the only
+    symptom is __NEXT_DATA__ with no closing </script>. Retrying is what
+    distinguishes that from a genuine layout change.
+    """
+
+    GOOD = ('<html><script id="__NEXT_DATA__" type="application/json">'
+            '{"props": {"ok": true}}</script></html>')
+    # A real truncation: the tag opens, the body is cut, nothing closes.
+    TRUNCATED = ('<html><script id="__NEXT_DATA__" type="application/json">'
+                 '{"props": {"ok": tr')
+
+    def fetcher(self, *pages):
+        self.calls = []
+        pages = list(pages)
+
+        def fetch(url, timeout=45):
+            self.calls.append(url)
+            return pages[len(self.calls) - 1].encode("utf-8")
+        return fetch
+
+    def test_a_complete_page_is_parsed_without_retrying(self):
+        data = monitor.fetch_next_data("u", fetcher=self.fetcher(self.GOOD),
+                                       sleep=lambda _: None)
+        self.assertEqual(data["props"]["ok"], True)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_short_read_is_retried_and_then_succeeds(self):
+        data = monitor.fetch_next_data(
+            "u", fetcher=self.fetcher(self.TRUNCATED, self.TRUNCATED, self.GOOD),
+            sleep=lambda _: None)
+        self.assertEqual(data["props"]["ok"], True)
+        self.assertEqual(len(self.calls), 3)
+
+    def test_it_gives_up_after_the_attempt_budget(self):
+        with self.assertRaises(RuntimeError):
+            monitor.fetch_next_data(
+                "u", attempts=2,
+                fetcher=self.fetcher(self.TRUNCATED, self.TRUNCATED),
+                sleep=lambda _: None)
+        self.assertEqual(len(self.calls), 2)
+
+    def test_the_error_blames_a_short_read_not_a_layout_change(self):
+        """The old message sent a reader hunting for a redesign that never
+        happened."""
+        with self.assertRaises(RuntimeError) as caught:
+            monitor.fetch_next_data(
+                "u", attempts=1, label="fixture listing",
+                fetcher=self.fetcher(self.TRUNCATED), sleep=lambda _: None)
+        message = str(caught.exception).lower()
+        self.assertIn("incomplete", message)
+        self.assertIn("fixture listing", message)
+
+    def test_it_backs_off_between_attempts(self):
+        waits = []
+        with self.assertRaises(RuntimeError):
+            monitor.fetch_next_data(
+                "u", attempts=3,
+                fetcher=self.fetcher(self.TRUNCATED, self.TRUNCATED,
+                                     self.TRUNCATED),
+                sleep=waits.append)
+        self.assertEqual(waits, [1, 2])
+
+    def test_a_network_error_is_also_retried(self):
+        """A short read and a dropped connection deserve the same treatment."""
+        calls = []
+
+        def flaky(url, timeout=45):
+            calls.append(url)
+            if len(calls) < 3:
+                raise OSError("connection reset")
+            return self.GOOD.encode("utf-8")
+
+        data = monitor.fetch_next_data("u", fetcher=flaky, sleep=lambda _: None)
+        self.assertEqual(data["props"]["ok"], True)
+        self.assertEqual(len(calls), 3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

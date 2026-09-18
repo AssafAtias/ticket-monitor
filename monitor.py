@@ -435,6 +435,35 @@ def fetch_with_retry(url, attempts=3, timeout=45, label=""):
     raise RuntimeError(f"{label or url} failed after {attempts} attempts: {last}")
 
 
+def fetch_next_data(url, attempts=3, label="", fetcher=None, sleep=None) -> dict:
+    """Fetch an HTML page and parse its __NEXT_DATA__, retrying short reads.
+
+    The ticket office intermittently returns a truncated body - observed at
+    2,033,592 bytes with no closing </html> where the complete page is
+    2,209,538 - and gzip.decompress returns that partial content without
+    raising. The only symptom is a __NEXT_DATA__ script with no closing
+    </script>, which extract_next_data reports as a layout change.
+
+    Retrying is what separates the two: a short read succeeds on the next
+    attempt, a real layout change fails every time. The final error says so,
+    rather than sending the reader hunting for a redesign that never happened.
+    """
+    fetcher = fetcher or fetch
+    sleep = sleep or time.sleep
+    last = None
+    for attempt in range(attempts):
+        try:
+            return extract_next_data(fetcher(url).decode("utf-8", "replace"))
+        except (ValueError, OSError) as exc:
+            last = exc
+            if attempt < attempts - 1:
+                sleep(2 ** attempt)
+    raise RuntimeError(
+        f"{label or url}: page still incomplete after {attempts} attempts "
+        f"({last}). A short read looks identical to a layout change; this "
+        f"failed every time, so the layout may genuinely have changed.")
+
+
 class Api:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -455,12 +484,11 @@ class Api:
     def discover(self) -> Fixture:
         """The next Maccabi TA game, from the ticket office's listing page."""
         url = self.cfg.get("discovery_url") or DISCOVERY_URL
-        html = fetch(url).decode("utf-8", "replace")
-        return pick_next_fixture(extract_fixtures(extract_next_data(html)))
+        return pick_next_fixture(
+            extract_fixtures(fetch_next_data(url, label="fixture listing")))
 
     def shop_page(self) -> dict:
-        html = fetch(self.event_url).decode("utf-8", "replace")
-        return extract_next_data(html)
+        return fetch_next_data(self.event_url, label="shop page")
 
     def status(self, seating_event_id) -> dict:
         url = f"{self.seating_base}/api/public/event/{seating_event_id}/status{self._children_qs()}"
