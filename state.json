@@ -1,0 +1,11 @@
+{
+ "event": "https://tickets.leaan.net/event/--02j286",
+ "alerted": [
+  "vd6BAurCNz8xjc",
+  "yoWt5PAQVkg9In"
+ ],
+ "updated": "2026-09-19T18:39:11.999924+00:00",
+ "last_heartbeat": "2026-09-19",
+ "failures": 0,
+ "escalated": false
+}

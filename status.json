@@ -1,0 +1,60 @@
+{
+ "generated_at": "2026-09-19T18:39:11.999924+00:00",
+ "last_success_at": "2026-09-19T18:39:11.999924+00:00",
+ "fixture": {
+  "name": "מכבי נתניה - מכבי ת\"א",
+  "url": "https://tickets.leaan.net/event/--02j286",
+  "start": "2026-09-19T17:00:00+00:00",
+  "venue": "אצטדיון נתניה"
+ },
+ "sale_status": "onSale",
+ "max_per_order": 6,
+ "buyable": 2,
+ "counts": {
+  "buyable": 2,
+  "free_not_on_sale": 6409,
+  "blocked_by_contingent": 57,
+  "booked": 6993,
+  "reserved": 9,
+  "notforsale": 0,
+  "other": 0
+ },
+ "tiers": [
+  {
+   "category": "מזרחי עליון | לא מסומן",
+   "price": 75,
+   "available": 1
+  },
+  {
+   "category": "מזרחי תחתון | לא מסומן",
+   "price": 75,
+   "available": 1
+  },
+  {
+   "category": "Eּ+",
+   "price": 155,
+   "available": 0
+  }
+ ],
+ "cheapest": [
+  {
+   "price": 75,
+   "section": "504",
+   "row": "14",
+   "seat": "85",
+   "gate": "21A",
+   "category": "מזרחי תחתון | לא מסומן"
+  },
+  {
+   "price": 75,
+   "section": "605",
+   "row": "20",
+   "seat": "101",
+   "gate": "22B",
+   "category": "מזרחי עליון | לא מסומן"
+  }
+ ],
+ "alerted": 2,
+ "alert_delivered": true,
+ "error": null
+}
