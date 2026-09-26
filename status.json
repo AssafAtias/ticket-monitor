@@ -1,0 +1,249 @@
+{
+ "generated_at": "2026-09-26T14:28:34.917248+00:00",
+ "last_success_at": "2026-09-25T10:27:12.533052+00:00",
+ "fixture": {
+  "name": "מכבי ת\"א - בני סכנין",
+  "url": "https://tickets.leaan.net/event/--co3j4w",
+  "start": "2026-10-10T16:30:00+00:00",
+  "venue": "אצטדיון בלומפילד"
+ },
+ "sale_status": "onSale",
+ "max_per_order": 200,
+ "buyable": 966,
+ "counts": {
+  "buyable": 966,
+  "free_not_on_sale": 1387,
+  "blocked_by_contingent": 3663,
+  "booked": 23906,
+  "reserved": 21,
+  "notforsale": 0,
+  "other": 0
+ },
+ "tiers": [
+  {
+   "category": "שער 4",
+   "price": 90,
+   "available": 917
+  },
+  {
+   "category": "שער 7 משפחות (419-422)",
+   "price": 90,
+   "available": 0
+  },
+  {
+   "category": "מזרחי עליון - לא מסומן (428-431)",
+   "price": 100,
+   "available": 0
+  },
+  {
+   "category": "300-301",
+   "price": 125,
+   "available": 0
+  },
+  {
+   "category": "309-310",
+   "price": 125,
+   "available": 35
+  },
+  {
+   "category": "319-322",
+   "price": 125,
+   "available": 0
+  },
+  {
+   "category": "328-331",
+   "price": 125,
+   "available": 0
+  },
+  {
+   "category": "שער 10 - לא מסומן",
+   "price": 125,
+   "available": 0
+  },
+  {
+   "category": "שער 11 - לא מסומן",
+   "price": 125,
+   "available": 0
+  },
+  {
+   "category": "323-324",
+   "price": 175,
+   "available": 0
+  },
+  {
+   "category": "326-327",
+   "price": 175,
+   "available": 0
+  },
+  {
+   "category": "423-424",
+   "price": 175,
+   "available": 0
+  },
+  {
+   "category": "426-427",
+   "price": 175,
+   "available": 0
+  },
+  {
+   "category": "302",
+   "price": 210,
+   "available": 0
+  },
+  {
+   "category": "308",
+   "price": 210,
+   "available": 5
+  },
+  {
+   "category": "221-224",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "225 שער 7",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "225 שער 8 ",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "226-229",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "303",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "307",
+   "price": 220,
+   "available": 2
+  },
+  {
+   "category": "325 שער 7",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "325 שער 8",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "425 שער 7",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "425 שער 8",
+   "price": 220,
+   "available": 0
+  },
+  {
+   "category": "201-203",
+   "price": 375,
+   "available": 2
+  },
+  {
+   "category": "207-209",
+   "price": 375,
+   "available": 2
+  },
+  {
+   "category": "זהב",
+   "price": 900,
+   "available": 3
+  }
+ ],
+ "cheapest": [
+  {
+   "price": 90,
+   "section": "311",
+   "row": "22",
+   "seat": "10",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "22",
+   "seat": "6",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "22",
+   "seat": "7",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "22",
+   "seat": "8",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "22",
+   "seat": "9",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "23",
+   "seat": "10",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "23",
+   "seat": "11",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "23",
+   "seat": "6",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "23",
+   "seat": "7",
+   "gate": "4",
+   "category": "שער 4"
+  },
+  {
+   "price": 90,
+   "section": "311",
+   "row": "23",
+   "seat": "8",
+   "gate": "4",
+   "category": "שער 4"
+  }
+ ],
+ "alerted": 0,
+ "alert_delivered": null,
+ "error": "status failed after 3 attempts: HTTP Error 400: Bad Request"
+}
